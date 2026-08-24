@@ -209,10 +209,17 @@ Judges can trigger: charger failure, high demand, traffic increase, reset.
 npm install
 cp .env.example .env
 npm test
-npm run dev
+npm run build
+npm start
 ```
 
-Open [http://127.0.0.1:43123](http://127.0.0.1:43123) (the dev server binds `0.0.0.0:43123` so the cloud preview proxy can reach it).
+Open [http://127.0.0.1:43123](http://127.0.0.1:43123). The server binds `0.0.0.0:43123` so the cloud preview proxy can reach it.
+
+For hot reload during development:
+
+```bash
+npm run dev
+```
 
 ---
 
@@ -225,9 +232,9 @@ See `.env.example`. Map tiles need **no key**. `MAPBOX_*` and `DATABASE_URL` are
 ## Running Locally
 
 ```bash
-npm run dev      # 0.0.0.0:43123
-npm run build && npm start
-npm test         # vitest — battery, prediction, scoring, Dijkstra, reroute
+npm run build && npm start   # stable preview — 0.0.0.0:43123
+npm run dev                  # hot reload
+npm test                     # vitest — battery, prediction, scoring, Dijkstra, reroute
 npm run lint
 ```
 
