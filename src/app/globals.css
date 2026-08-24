@@ -1,0 +1,106 @@
+@import "tailwindcss";
+
+:root {
+  --navy-950: #070b14;
+  --navy-900: #0b1220;
+  --navy-800: #111b2e;
+  --navy-700: #1a2740;
+  --navy-600: #243454;
+  --green: #3ddc97;
+  --green-dim: #1fa86a;
+  --green-glow: rgba(61, 220, 151, 0.18);
+  --amber: #f5a524;
+  --red: #f04343;
+  --blue: #4c8dff;
+  --text: #e8eef8;
+  --muted: #8b9bb4;
+  --line: rgba(139, 155, 180, 0.22);
+  --surface: #121b2e;
+}
+
+@theme inline {
+  --color-navy-950: var(--navy-950);
+  --color-navy-900: var(--navy-900);
+  --color-navy-800: var(--navy-800);
+  --color-navy-700: var(--navy-700);
+  --color-navy-600: var(--navy-600);
+  --color-volt: var(--green);
+  --color-volt-dim: var(--green-dim);
+  --color-warn: var(--amber);
+  --color-danger: var(--red);
+  --color-info: var(--blue);
+  --color-ink: var(--text);
+  --color-mute: var(--muted);
+  --color-line: var(--line);
+  --font-sans: var(--font-outfit);
+  --font-mono: var(--font-ibm);
+}
+
+html,
+body {
+  background: var(--navy-950);
+  color: var(--text);
+  min-height: 100%;
+}
+
+body {
+  font-family: var(--font-outfit), ui-sans-serif, system-ui, sans-serif;
+}
+
+.font-mono {
+  font-family: var(--font-ibm), ui-monospace, monospace;
+}
+
+::selection {
+  background: var(--green);
+  color: var(--navy-950);
+}
+
+.grid-bg {
+  background-image:
+    linear-gradient(rgba(61, 220, 151, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(61, 220, 151, 0.04) 1px, transparent 1px);
+  background-size: 48px 48px;
+}
+
+.leaflet-container {
+  background: #0b1220;
+  font-family: inherit;
+}
+
+.vg-marker {
+  background: transparent;
+  border: none;
+}
+
+.vg-popup .leaflet-popup-content-wrapper {
+  background: #111b2e;
+  color: #e8eef8;
+  border-radius: 12px;
+  border: 1px solid rgba(139, 155, 180, 0.25);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+}
+
+.vg-popup .leaflet-popup-tip {
+  background: #111b2e;
+}
+
+.vg-popup a.leaflet-popup-close-button {
+  color: #8b9bb4;
+}
+
+.field {
+  width: 100%;
+  height: 2.5rem;
+  border-radius: 0.5rem;
+  border: 1px solid rgba(139, 155, 180, 0.22);
+  background: #0b1220;
+  color: #e8eef8;
+  padding: 0 0.75rem;
+  font-size: 0.875rem;
+}
+
+.field:focus {
+  outline: 2px solid #3ddc97;
+  outline-offset: 1px;
+}
