@@ -130,16 +130,22 @@ export const PLACES: Place[] = [
 ];
 
 export function getPlace(id: string): Place | undefined {
+  if (id.startsWith("custom:")) {
+    const [latStr, lngStr] = id.slice("custom:".length).split(",");
+    const latitude = Number(latStr);
+    const longitude = Number(lngStr);
+    if (Number.isFinite(latitude) && Number.isFinite(longitude)) {
+      return {
+        id,
+        name: "Current Location",
+        label: "Current Location",
+        city: "Current Location",
+        latitude,
+        longitude,
+        kind: "landmark",
+      };
+    }
+    return undefined;
+  }
   return PLACES.find((p) => p.id === id);
-}
-
-export function searchPlaces(query: string): Place[] {
-  const q = query.trim().toLowerCase();
-  if (!q) return PLACES;
-  return PLACES.filter(
-    (p) =>
-      p.name.toLowerCase().includes(q) ||
-      p.label.toLowerCase().includes(q) ||
-      p.city.toLowerCase().includes(q),
-  );
 }

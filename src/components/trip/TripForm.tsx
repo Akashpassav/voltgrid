@@ -4,10 +4,11 @@ import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { PLACES } from "@/lib/data/places";
 import { VEHICLES } from "@/lib/data/vehicles";
-import type { DrivingPreference, OptimizeResponse, TripRequest } from "@/lib/types";
+import type { DrivingPreference, OptimizeResponse, TripRequest, Coordinates } from "@/lib/types";
 import { apiPost, DEFAULT_TRIP, saveResult, saveTrip } from "@/lib/client/api";
 import { Button } from "@/components/ui/button";
 import { Battery, Gauge, MapPin, Navigation } from "lucide-react";
+import { LocationButton } from "@/components/trip/LocationButton";
 
 const PREFS: { id: DrivingPreference; label: string; hint: string }[] = [
   { id: "fastest", label: "Fastest", hint: "Minimise driving + charging time" },
@@ -27,10 +28,20 @@ export function TripForm({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  // Holds the reverse-geocoded "Current Location" entry once resolved, so it
+  // can be injected into the origin dropdown alongside the fixed PLACES list.
+  const [customOrigin, setCustomOrigin] = useState<{ id: string; label: string } | null>(null);
+
   const vehicle = useMemo(
     () => VEHICLES.find((v) => v.id === trip.vehicleId),
     [trip.vehicleId],
   );
+
+  function handleLocationResolved(address: string, coords: Coordinates) {
+    const id = `custom:${coords.lat.toFixed(6)},${coords.lng.toFixed(6)}`;
+    setCustomOrigin({ id, label: address });
+    setTrip({ ...trip, originId: id });
+  }
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -56,17 +67,23 @@ export function TripForm({
     <form onSubmit={onSubmit} className="grid gap-5">
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label="Starting location" icon={<MapPin className="h-3.5 w-3.5" />}>
-          <select
-            className="field"
-            value={trip.originId}
-            onChange={(e) => setTrip({ ...trip, originId: e.target.value })}
-          >
-            {PLACES.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.label}
-              </option>
-            ))}
-          </select>
+          <div className="flex items-center gap-2">
+            <select
+              className="field flex-1"
+              value={trip.originId}
+              onChange={(e) => setTrip({ ...trip, originId: e.target.value })}
+            >
+              {customOrigin && (
+                <option value={customOrigin.id}>{customOrigin.label}</option>
+              )}
+              {PLACES.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.label}
+                </option>
+              ))}
+            </select>
+            <LocationButton onResolved={handleLocationResolved} />
+          </div>
         </Field>
         <Field label="Destination" icon={<Navigation className="h-3.5 w-3.5" />}>
           <select

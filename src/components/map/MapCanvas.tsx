@@ -8,7 +8,7 @@ import "leaflet/dist/leaflet.css";
 import type { Coordinates, LiveStation, OptimizedRoute } from "@/lib/types";
 import { Badge } from "@/components/ui/badge";
 import Link from "next/link";
-import { useGeolocation } from "@/lib/hooks/useGeolocation";
+import { useGeolocationContext } from "@/lib/context/GeolocationContext";
 import { Locate, AlertTriangle } from "lucide-react";
 import { useTamilNaduStations } from "@/lib/hooks/useTamilNaduStations";
 
@@ -168,7 +168,7 @@ export function MapCanvas({
   const rec = useMemo(() => new Set(recommendedIds), [recommendedIds]);
   const waypoints = useMemo(() => route?.geometry ?? [], [route]);
   const roadGeometry = useRoadGeometry(waypoints);
-  const geo = useGeolocation();
+  const geo = useGeolocationContext();
   const hasRecentered = useMemo(() => ({ current: false }), []);
 
   // Live Tamil Nadu charging stations from Open Charge Map, merged in
@@ -181,8 +181,7 @@ export function MapCanvas({
   }, [stations, tnStations]);
 
   useEffect(() => {
-    geo.start();
-    return () => geo.stop();
+    geo.requestLocation();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
