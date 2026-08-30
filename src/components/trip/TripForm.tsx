@@ -2,19 +2,23 @@
 
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { PLACES } from "@/lib/data/places";
 import { VEHICLES } from "@/lib/data/vehicles";
 import type { DrivingPreference, OptimizeResponse, TripRequest, Coordinates } from "@/lib/types";
 import { apiPost, DEFAULT_TRIP, saveResult, saveTrip } from "@/lib/client/api";
 import { Button } from "@/components/ui/button";
 import { Battery, Gauge, MapPin, Navigation } from "lucide-react";
 import { LocationButton } from "@/components/trip/LocationButton";
+import { LocationAutocomplete } from "@/components/trip/LocationAutocomplete";
 
 const PREFS: { id: DrivingPreference; label: string; hint: string }[] = [
   { id: "fastest", label: "Fastest", hint: "Minimise driving + charging time" },
   { id: "efficient", label: "Energy efficient", hint: "Protect the pack and range" },
   { id: "reliability", label: "Max charging reliability", hint: "Prefer predicted-available hubs" },
 ];
+
+function coordsToId(coords: Coordinates): string {
+  return `custom:${coords.lat.toFixed(6)},${coords.lng.toFixed(6)}`;
+}
 
 export function TripForm({
   initial = DEFAULT_TRIP,
@@ -25,26 +29,37 @@ export function TripForm({
 }) {
   const router = useRouter();
   const [trip, setTrip] = useState<TripRequest>(initial);
+  const [originLabel, setOriginLabel] = useState("");
+  const [destinationLabel, setDestinationLabel] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-
-  // Holds the reverse-geocoded "Current Location" entry once resolved, so it
-  // can be injected into the origin dropdown alongside the fixed PLACES list.
-  const [customOrigin, setCustomOrigin] = useState<{ id: string; label: string } | null>(null);
 
   const vehicle = useMemo(
     () => VEHICLES.find((v) => v.id === trip.vehicleId),
     [trip.vehicleId],
   );
 
-  function handleLocationResolved(address: string, coords: Coordinates) {
-    const id = `custom:${coords.lat.toFixed(6)},${coords.lng.toFixed(6)}`;
-    setCustomOrigin({ id, label: address });
-    setTrip({ ...trip, originId: id });
+  function handleOriginSelect(label: string, coords: Coordinates) {
+    setOriginLabel(label);
+    setTrip({ ...trip, originId: coordsToId(coords) });
+  }
+
+  function handleDestinationSelect(label: string, coords: Coordinates) {
+    setDestinationLabel(label);
+    setTrip({ ...trip, destinationId: coordsToId(coords) });
+  }
+
+  function handleLocationButtonResolved(address: string, coords: Coordinates) {
+    setOriginLabel(address);
+    setTrip({ ...trip, originId: coordsToId(coords) });
   }
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (!trip.originId || !trip.destinationId) {
+      setError("Choose both a starting location and a destination.");
+      return;
+    }
     setBusy(true);
     setError(null);
     saveTrip(trip);
@@ -67,36 +82,19 @@ export function TripForm({
     <form onSubmit={onSubmit} className="grid gap-5">
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label="Starting location" icon={<MapPin className="h-3.5 w-3.5" />}>
-          <div className="flex items-center gap-2">
-            <select
-              className="field flex-1"
-              value={trip.originId}
-              onChange={(e) => setTrip({ ...trip, originId: e.target.value })}
-            >
-              {customOrigin && (
-                <option value={customOrigin.id}>{customOrigin.label}</option>
-              )}
-              {PLACES.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.label}
-                </option>
-              ))}
-            </select>
-            <LocationButton onResolved={handleLocationResolved} />
-          </div>
+          <LocationAutocomplete
+            value={originLabel}
+            onSelect={handleOriginSelect}
+            placeholder="Search Tamil Nadu, Bengaluru…"
+            extraButton={<LocationButton onResolved={handleLocationButtonResolved} />}
+          />
         </Field>
         <Field label="Destination" icon={<Navigation className="h-3.5 w-3.5" />}>
-          <select
-            className="field"
-            value={trip.destinationId}
-            onChange={(e) => setTrip({ ...trip, destinationId: e.target.value })}
-          >
-            {PLACES.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.label}
-              </option>
-            ))}
-          </select>
+          <LocationAutocomplete
+            value={destinationLabel}
+            onSelect={handleDestinationSelect}
+            placeholder="Search Tamil Nadu, Bengaluru…"
+          />
         </Field>
       </div>
 
@@ -181,7 +179,7 @@ export function TripForm({
       )}
 
       <Button type="submit" size="lg" disabled={busy}>
-        {busy ? "Optimising corridor…" : submitLabel}
+        {busy ? "Optimising route…" : submitLabel}
       </Button>
     </form>
   );
