@@ -9,10 +9,12 @@ import type { Coordinates, LiveStation, OptimizedRoute } from "@/lib/types";
 import { Badge } from "@/components/ui/badge";
 import Link from "next/link";
 import { useGeolocationContext } from "@/lib/context/GeolocationContext";
-import { Locate, AlertTriangle } from "lucide-react";
-import { useTamilNaduStations } from "@/lib/hooks/useTamilNaduStations";
+import { Locate, AlertTriangle, Bike, Car, LayoutGrid } from "lucide-react";
+import { useStationCoverage } from "@/lib/hooks/useStationCoverage";
 
 const CHENNAI: Coordinates = { lat: 12.92, lng: 80.12 };
+
+type VehicleFilter = "all" | "2-wheeler" | "4-wheeler";
 
 function statusColor(status: LiveStation["status"], recommended: boolean): string {
   if (recommended) return "#4285F4";
@@ -44,7 +46,6 @@ function markerIcon(color: string, recommended: boolean) {
   });
 }
 
-// "You are here" — blue pulsing dot, distinct from station markers
 function userLocationIcon() {
   return L.divIcon({
     className: "vg-user-marker",
@@ -75,11 +76,11 @@ function pinIcon(color: string) {
 }
 
 function clusterIcon(count: number) {
-  const size = count < 10 ? 34 : count < 25 ? 40 : 46;
+  const size = count < 10 ? 34 : count < 50 ? 40 : count < 200 ? 46 : 52;
   return L.divIcon({
     className: "vg-cluster",
     iconSize: [size, size],
-    html: `<div style="width:${size}px;height:${size}px;border-radius:999px;background:#4285F4;border:3px solid #ffffff;box-shadow:0 1px 6px rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:600;font-family:sans-serif;font-size:${size * 0.36}px;">${count}</div>`,
+    html: `<div style="width:${size}px;height:${size}px;border-radius:999px;background:#4285F4;border:3px solid #ffffff;box-shadow:0 1px 6px rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:600;font-family:sans-serif;font-size:${size * 0.34}px;">${count}</div>`,
   });
 }
 
@@ -93,7 +94,6 @@ function Fit({ points }: { points: Coordinates[] }) {
   return null;
 }
 
-// Pans the map to the user's position once, on first fix only.
 function RecenterOnFirstFix({ position, hasRecentered }: { position: Coordinates | null; hasRecentered: React.MutableRefObject<boolean> }) {
   const map = useMap();
   useEffect(() => {
@@ -105,7 +105,6 @@ function RecenterOnFirstFix({ position, hasRecentered }: { position: Coordinates
   return null;
 }
 
-// Imperative recenter button — needs access to the map instance.
 function RecenterButton({ position }: { position: Coordinates | null }) {
   const map = useMap();
   return (
@@ -120,6 +119,41 @@ function RecenterButton({ position }: { position: Coordinates | null }) {
     >
       <Locate className="h-4.5 w-4.5" />
     </button>
+  );
+}
+
+// 2W / 4W / all toggle — keeps the map legible once station density jumps
+// from ~50 to 1000+ points across Tamil Nadu + Bengaluru.
+function VehicleFilterControl({
+  value,
+  onChange,
+}: {
+  value: VehicleFilter;
+  onChange: (v: VehicleFilter) => void;
+}) {
+  const options: { id: VehicleFilter; label: string; icon: React.ReactNode }[] = [
+    { id: "all", label: "All", icon: <LayoutGrid className="h-3.5 w-3.5" /> },
+    { id: "2-wheeler", label: "2W", icon: <Bike className="h-3.5 w-3.5" /> },
+    { id: "4-wheeler", label: "4W", icon: <Car className="h-3.5 w-3.5" /> },
+  ];
+  return (
+    <div className="absolute right-3 top-3 z-[1000] flex gap-1 rounded-lg border border-electric/20 bg-navy-900/90 p-1 shadow-lg backdrop-blur">
+      {options.map((opt) => (
+        <button
+          key={opt.id}
+          type="button"
+          onClick={() => onChange(opt.id)}
+          className={`flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors ${
+            value === opt.id
+              ? "bg-electric/20 text-electric shadow-[0_0_12px_-4px] shadow-electric/60"
+              : "text-mute hover:text-ink"
+          }`}
+        >
+          {opt.icon}
+          {opt.label}
+        </button>
+      ))}
+    </div>
   );
 }
 
@@ -170,15 +204,27 @@ export function MapCanvas({
   const roadGeometry = useRoadGeometry(waypoints);
   const geo = useGeolocationContext();
   const hasRecentered = useMemo(() => ({ current: false }), []);
+  const [vehicleFilter, setVehicleFilter] = useState<VehicleFilter>("all");
 
-  // Live Tamil Nadu charging stations from Open Charge Map, merged in
-  // automatically so no page needs to fetch or pass these separately.
-  const { stations: tnStations, error: tnError } = useTamilNaduStations();
+  // Tamil Nadu + Bengaluru live coverage from Open Charge Map, merged with
+  // whatever stations the page already passes in.
+  const { stations: coverageStations, error: coverageError } = useStationCoverage();
   const allStations = useMemo(() => {
     const seenIds = new Set(stations.map((s) => s.id));
-    const extra = tnStations.filter((s) => !seenIds.has(s.id));
+    const extra = coverageStations.filter((s) => !seenIds.has(s.id));
     return [...stations, ...extra];
-  }, [stations, tnStations]);
+  }, [stations, coverageStations]);
+
+  const filteredStations = useMemo(() => {
+    if (vehicleFilter === "all") return allStations;
+    return allStations.filter((s) => {
+      const vt = (s as { vehicleType?: string }).vehicleType;
+      // Stations without a known vehicle type (seed data, or OCM entries
+      // where we couldn't infer one) stay visible in every filter mode —
+      // hiding "unspecified" would make the map look sparser than it is.
+      return !vt || vt === "unspecified" || vt === "both" || vt === vehicleFilter;
+    });
+  }, [allStations, vehicleFilter]);
 
   useEffect(() => {
     geo.requestLocation();
@@ -188,14 +234,14 @@ export function MapCanvas({
   const points = useMemo(() => {
     if (roadGeometry.length) return roadGeometry;
     if (waypoints.length) return waypoints;
-    return allStations.map((s) => ({ lat: s.latitude, lng: s.longitude }));
-  }, [roadGeometry, waypoints, allStations]);
+    return filteredStations.map((s) => ({ lat: s.latitude, lng: s.longitude }));
+  }, [roadGeometry, waypoints, filteredStations]);
 
-  const recommendedStations = allStations.filter((s) => rec.has(s.id));
-  const regularStations = allStations.filter((s) => !rec.has(s.id));
+  const recommendedStations = filteredStations.filter((s) => rec.has(s.id));
+  const regularStations = filteredStations.filter((s) => !rec.has(s.id));
 
   const showPermissionBanner = geo.status === "denied" || geo.status === "unavailable" || geo.status === "unsupported";
-  const showTnError = Boolean(tnError);
+  const showCoverageError = Boolean(coverageError);
 
   return (
     <div className="relative h-full w-full">
@@ -209,11 +255,13 @@ export function MapCanvas({
         </div>
       )}
 
-      {showTnError && (
+      {showCoverageError && !showPermissionBanner && (
         <div className="absolute left-3 top-3 z-[1000] rounded-lg border border-warn/30 bg-navy-900/95 px-3 py-1.5 text-xs text-warn shadow-lg backdrop-blur">
-          Live Tamil Nadu station data unavailable — showing local data only.
+          Live station coverage unavailable — showing local data only.
         </div>
       )}
+
+      <VehicleFilterControl value={vehicleFilter} onChange={setVehicleFilter} />
 
       <MapContainer
         center={[CHENNAI.lat, CHENNAI.lng]}
@@ -261,7 +309,11 @@ export function MapCanvas({
           </>
         )}
 
-        <MarkerClusterGroup chunkedLoading iconCreateFunction={(cluster: any) => clusterIcon(cluster.getChildCount())}>
+        <MarkerClusterGroup
+          chunkedLoading
+          maxClusterRadius={55}
+          iconCreateFunction={(cluster: any) => clusterIcon(cluster.getChildCount())}
+        >
           {regularStations.map((s) => {
             const color = statusColor(s.status, false);
             return (

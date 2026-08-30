@@ -1,7 +1,7 @@
 /**
  * VoltGrid optimisation pipeline
  *
- * User trip → RoutingEngine (corridor Dijkstra / future OSRM)
+ * User trip → RoutingEngine (OSRM, state-wide)
  *           → EV energy model (SOC never below safety reserve)
  *           → Charging station query (MockChargingProvider / future OCPI)
  *           → Availability prediction (logistic regression v1)
@@ -11,8 +11,12 @@
 import { getPlace } from "@/lib/data/places";
 import { getVehicle } from "@/lib/data/vehicles";
 import { rankStations } from "@/lib/algorithms/charging-stop";
-import { dijkstra, routingEngine, routeViaNodeIds, edgeTravelMinutes, type RoutedPath } from "@/lib/algorithms/routing";
-import { snapToNode } from "@/lib/data/graph";
+import {
+  routeBetween,
+  routeViaWaypoints,
+  type RoutedPath,
+  type RouteWaypoint,
+} from "@/lib/services/osrm-routing";
 import { computeRouteConfidence } from "@/lib/models/confidence";
 import {
   chargeTimeMinutes,
@@ -36,6 +40,13 @@ import type {
 import { addMinutes } from "@/lib/utils/time";
 import { haversineKm } from "@/lib/utils/geo";
 
+// Caps how many nearby candidate stations get their own OSRM route computed
+// per request. Corridor routing kept this small implicitly (short corridor,
+// few nearby stations); state-wide OSRM routing can otherwise trigger dozens
+// of parallel requests to OSRM's public server on a long trip. Nearest-by-
+// availability heuristic keeps candidate quality reasonable while bounding
+// API load.
+const MAX_CANDIDATE_STATIONS = 15;
 
 interface SimLeg {
   path: RoutedPath;
@@ -45,7 +56,7 @@ interface SimLeg {
 }
 
 function averageTerrain(path: RoutedPath): number {
-  return path.meanTerrain || 1.06;
+  return path.meanTerrain || 1;
 }
 
 function simulatePath(
@@ -79,20 +90,28 @@ function targetDepartSoc(
   return Number(want.toFixed(1));
 }
 
-function pathViaStationIds(
-  origin: Coordinates,
-  dest: Coordinates,
-  stationIds: string[],
+function placeWaypoint(id: string, name: string, coords: Coordinates): RouteWaypoint {
+  return { id, name, latitude: coords.lat, longitude: coords.lng };
+}
+
+function stationWaypoint(station: LiveStation): RouteWaypoint {
+  return {
+    id: `S-${station.id}`,
+    name: station.name,
+    latitude: station.latitude,
+    longitude: station.longitude,
+    stationId: station.id,
+  };
+}
+
+async function pathViaStations(
+  originWp: RouteWaypoint,
+  destWp: RouteWaypoint,
+  stations: LiveStation[],
   traffic: number,
-  preference: TripRequest["preference"] = "fastest",
-): RoutedPath | null {
-  const originNode = snapToNode(origin.lat, origin.lng);
-  const destNode = snapToNode(dest.lat, dest.lng);
-  return routeViaNodeIds(
-    [originNode.id, ...stationIds.map((id) => `S-${id}`), destNode.id],
-    traffic,
-    preference,
-  );
+): Promise<RoutedPath | null> {
+  const waypoints = [originWp, ...stations.map(stationWaypoint), destWp];
+  return routeViaWaypoints(waypoints, traffic);
 }
 
 function nearPath(station: LiveStation, geometry: Coordinates[], maxKm = 4.2): boolean {
@@ -136,7 +155,7 @@ function simulateWithStops(
     socCursor = socAfterEnergy(vehicle, socCursor, e);
     minSoc = Math.min(minSoc, socCursor);
     energyKWh += e;
-    const durationMin = edgeTravelMinutes(leg.edge, trafficMultiplier);
+    const durationMin = leg.edge.durationMinutes * trafficMultiplier;
     drivingMinutes += durationMin;
     routeLegs.push({
       fromId: leg.from.id,
@@ -201,8 +220,8 @@ export async function optimizeTrip(req: TripRequest): Promise<OptimizeResponse> 
     return {
       ok: false,
       code: "INVALID_PLACES",
-      message: "Start or destination is not in the Chennai–Chengalpattu corridor dataset.",
-      suggestions: ["Pick places from the suggested list (e.g. Chennai → Chengalpattu)."],
+      message: "Start or destination could not be resolved to a location.",
+      suggestions: ["Pick a place from the list, search for one, or use your current location."],
     };
   }
 
@@ -211,7 +230,7 @@ export async function optimizeTrip(req: TripRequest): Promise<OptimizeResponse> 
       ok: false,
       code: "NO_ROUTE",
       message: "Start and destination are the same place.",
-      suggestions: ["Choose a different destination along the GST corridor."],
+      suggestions: ["Choose a different destination."],
     };
   }
 
@@ -222,15 +241,22 @@ export async function optimizeTrip(req: TripRequest): Promise<OptimizeResponse> 
   const from: Coordinates = { lat: origin.latitude, lng: origin.longitude };
   const to: Coordinates = { lat: destination.latitude, lng: destination.longitude };
 
-  const originNode = snapToNode(from.lat, from.lng);
-  const destNode = snapToNode(to.lat, to.lng);
-  const direct = dijkstra(originNode.id, destNode.id, traffic, req.preference);
+  const originWp = placeWaypoint(origin.id, origin.name, from);
+  const destWp = placeWaypoint(destination.id, destination.name, to);
+
+  let direct: RoutedPath | null;
+  try {
+    direct = await routeBetween(originWp, destWp, traffic);
+  } catch (err) {
+    console.error("OSRM routing failed for direct trip:", err);
+    direct = null;
+  }
   if (!direct) {
     return {
       ok: false,
       code: "NO_ROUTE",
-      message: "No corridor route could be constructed between those points.",
-      suggestions: ["Stay inside the Chennai–Chengalpattu map, or pick a listed place."],
+      message: "No route could be constructed between those points.",
+      suggestions: ["Check that both locations are reachable by road, or try again."],
     };
   }
 
@@ -252,9 +278,18 @@ export async function optimizeTrip(req: TripRequest): Promise<OptimizeResponse> 
     chosenPath = direct;
     chosenStops = [];
   } else {
-    const online = stations.filter(
+    let online = stations.filter(
       (s) => isStationOnline(s) && nearPath(s, direct.geometry, 4.5),
     );
+
+    // Bound how many candidates we send to OSRM individually — see
+    // MAX_CANDIDATE_STATIONS comment above.
+    if (online.length > MAX_CANDIDATE_STATIONS) {
+      online = [...online]
+        .sort((a, b) => b.predictedAvailability - a.predictedAvailability)
+        .slice(0, MAX_CANDIDATE_STATIONS);
+    }
+
     if (online.length === 0) {
       return {
         ok: false,
@@ -268,15 +303,24 @@ export async function optimizeTrip(req: TripRequest): Promise<OptimizeResponse> 
       };
     }
 
-    const candidates = online
-      .map((station) => {
-        const via = pathViaStationIds(from, to, [station.id], traffic, req.preference);
-        if (!via) return null;
-        const originNode = snapToNode(from.lat, from.lng);
-        const destNode = snapToNode(to.lat, to.lng);
-        const toStation = routeViaNodeIds([originNode.id, `S-${station.id}`], traffic, req.preference);
-        const toDest = routeViaNodeIds([`S-${station.id}`, destNode.id], traffic, req.preference);
-        if (!toStation || !toDest) return null;
+    const candidateResults = await Promise.all(
+      online.map(async (station) => {
+        const stationWp = stationWaypoint(station);
+        let via: RoutedPath | null;
+        let toStation: RoutedPath | null;
+        let toDest: RoutedPath | null;
+        try {
+          [via, toStation, toDest] = await Promise.all([
+            pathViaStations(originWp, destWp, [station], traffic),
+            routeViaWaypoints([originWp, stationWp], traffic),
+            routeViaWaypoints([stationWp, destWp], traffic),
+          ]);
+        } catch (err) {
+          console.error(`OSRM routing failed for candidate station ${station.id}:`, err);
+          return null;
+        }
+        if (!via || !toStation || !toDest) return null;
+
         const arrive = simulatePath(vehicle, toStation, req.socPercent, weather);
         if (!feasible(vehicle, arrive.socEnd)) return null;
         const remainingEnergy = energyForDistanceKWh(vehicle, toDest.distanceKm, {
@@ -290,25 +334,37 @@ export async function optimizeTrip(req: TripRequest): Promise<OptimizeResponse> 
         const detourKm = Math.max(0, via.distanceKm - direct.distanceKm);
         const detourMinutes = Math.max(0, via.baseMinutes - direct.baseMinutes);
         return {
-          station,
-          detourKm,
-          detourMinutes,
-          arriveSocPercent: arrive.socEnd,
-          distanceFromOriginKm: toStation.distanceKm,
-          remainingToDestKm: toDest.distanceKm,
-          predictedAvailability: station.predictedAvailability,
-          preference: req.preference,
-          vehicle,
-          targetDepartSoc: depart,
+          via,
+          candidate: {
+            station,
+            detourKm,
+            detourMinutes,
+            arriveSocPercent: arrive.socEnd,
+            distanceFromOriginKm: toStation.distanceKm,
+            remainingToDestKm: toDest.distanceKm,
+            predictedAvailability: station.predictedAvailability,
+            preference: req.preference,
+            vehicle,
+            targetDepartSoc: depart,
+          },
         };
-      })
-      .filter((x): x is NonNullable<typeof x> => x !== null);
+      }),
+    );
+
+    const candidates = candidateResults
+      .filter((x): x is NonNullable<typeof x> => x !== null)
+      .map((x) => x.candidate);
+    const viaByStationId = new Map(
+      candidateResults
+        .filter((x): x is NonNullable<typeof x> => x !== null)
+        .map((x) => [x.candidate.station.id, x.via]),
+    );
 
     const ranked = rankStations(candidates);
     const best = ranked[0];
 
     if (best) {
-      const via = pathViaStationIds(from, to, [best.stationId], traffic, req.preference);
+      const via = viaByStationId.get(best.stationId) ?? null;
       if (via) {
         chosenPath = via;
         chosenStops = [best];
@@ -319,8 +375,10 @@ export async function optimizeTrip(req: TripRequest): Promise<OptimizeResponse> 
         }
       }
     } else {
-      const twoStop = findTwoStops(
+      const twoStop = await findTwoStops(
         vehicle,
+        originWp,
+        destWp,
         from,
         to,
         online,
@@ -338,7 +396,7 @@ export async function optimizeTrip(req: TripRequest): Promise<OptimizeResponse> 
             "Your current battery level cannot safely reach the destination. We found no reachable charger within the available range.",
           suggestions: [
             `Charge locally before starting — usable range is about ${battery.estimatedRangeKm.toFixed(0)} km.`,
-            "Pick a closer destination such as Tambaram or Guduvancheri.",
+            "Pick a closer destination.",
             "Choose a vehicle with a larger pack (Simple One / Ola S1 Pro).",
           ],
         };
@@ -362,7 +420,12 @@ export async function optimizeTrip(req: TripRequest): Promise<OptimizeResponse> 
   let elapsed = 0;
   const filledStops: ChargingStopPlan[] = [];
   for (const stop of chosenStops) {
-    const toStop = routingEngine.route(from, { lat: stop.latitude, lng: stop.longitude }, traffic);
+    let toStop: RoutedPath | null = null;
+    try {
+      toStop = await routeBetween(originWp, stationWaypoint(stop as unknown as LiveStation), traffic);
+    } catch (err) {
+      console.error("OSRM routing failed while computing stop ETA:", err);
+    }
     const driveMin = toStop?.baseMinutes ?? stop.detourMinutes;
     elapsed += driveMin;
     const eta = addMinutes(now, elapsed);
@@ -395,7 +458,7 @@ export async function optimizeTrip(req: TripRequest): Promise<OptimizeResponse> 
   );
 
   if (filledStops.length === 0 && battery.estimatedRangeKm < chosenPath.distanceKm * 1.05) {
-    warnings.push("You are close to the range limit. A charger on the corridor remains a useful safety net.");
+    warnings.push("You are close to the range limit. A charger on the route remains a useful safety net.");
   }
 
   const route: OptimizedRoute = {
@@ -430,17 +493,19 @@ export async function optimizeTrip(req: TripRequest): Promise<OptimizeResponse> 
     stations,
     recommendedStationIds: filledStops.map((s) => s.stationId),
     dataLabels: {
-      stations: "REAL / STATIC DATA — seeded Chennai–Chengalpattu corridor (42 stations)",
+      stations: "REAL / STATIC DATA — Tamil Nadu + Bengaluru corridor (Open Charge Map)",
       status: "SIMULATED LIVE DATA — occupancy, queues and failures",
-      routing: "Corridor graph Dijkstra (OSRM/Mapbox-replaceable RoutingEngine)",
+      routing: "OSRM live driving routes (state-wide)",
       prediction: "Logistic regression v1 — ML-ready feature schema",
       grid: "Grid Intelligence — Prototype Simulation (no live DISCOM feed)",
     },
   };
 }
 
-function findTwoStops(
+async function findTwoStops(
   vehicle: Vehicle,
+  originWp: RouteWaypoint,
+  destWp: RouteWaypoint,
   from: Coordinates,
   to: Coordinates,
   online: LiveStation[],
@@ -449,32 +514,57 @@ function findTwoStops(
   weather: number,
   desiredArrival: number,
   direct: RoutedPath,
-): { path: RoutedPath; stops: ChargingStopPlan[] } | null {
-  const originReachable = online.filter((station) => {
-    const p = routingEngine.route(from, { lat: station.latitude, lng: station.longitude }, traffic);
-    if (!p) return false;
-    const sim = simulatePath(vehicle, p, req.socPercent, weather);
-    return feasible(vehicle, sim.socEnd);
-  });
-  originReachable.sort(
-    (a, b) => b.predictedAvailability * b.reliabilityScore - a.predictedAvailability * a.reliabilityScore,
+): Promise<{ path: RoutedPath; stops: ChargingStopPlan[] } | null> {
+  const reachableChecks = await Promise.all(
+    online.map(async (station) => {
+      let p: RoutedPath | null;
+      try {
+        p = await routeBetween(originWp, stationWaypoint(station), traffic);
+      } catch {
+        p = null;
+      }
+      if (!p) return null;
+      const sim = simulatePath(vehicle, p, req.socPercent, weather);
+      return feasible(vehicle, sim.socEnd) ? station : null;
+    }),
   );
+  const originReachable = reachableChecks
+    .filter((s): s is LiveStation => s !== null)
+    .sort(
+      (a, b) => b.predictedAvailability * b.reliabilityScore - a.predictedAvailability * a.reliabilityScore,
+    );
 
   for (const s1 of originReachable.slice(0, 8)) {
-    const p1 = routingEngine.route(from, { lat: s1.latitude, lng: s1.longitude }, traffic)!;
+    const s1Wp = stationWaypoint(s1);
+    let p1: RoutedPath | null;
+    try {
+      p1 = await routeBetween(originWp, s1Wp, traffic);
+    } catch {
+      p1 = null;
+    }
+    if (!p1) continue;
     const a1 = simulatePath(vehicle, p1, req.socPercent, weather);
     const d1 = targetDepartSoc(vehicle, a1.socEnd, vehicle.batteryKWh * 0.45, 40);
+
     for (const s2 of online) {
       if (s2.id === s1.id) continue;
-      const p2 = routingEngine.route(
-        { lat: s1.latitude, lng: s1.longitude },
-        { lat: s2.latitude, lng: s2.longitude },
-        traffic,
-      );
+      const s2Wp = stationWaypoint(s2);
+      let p2: RoutedPath | null;
+      try {
+        p2 = await routeBetween(s1Wp, s2Wp, traffic);
+      } catch {
+        p2 = null;
+      }
       if (!p2) continue;
       const a2 = simulatePath(vehicle, p2, d1, weather);
       if (!feasible(vehicle, a2.socEnd)) continue;
-      const p3 = routingEngine.route({ lat: s2.latitude, lng: s2.longitude }, to, traffic);
+
+      let p3: RoutedPath | null;
+      try {
+        p3 = await routeBetween(s2Wp, destWp, traffic);
+      } catch {
+        p3 = null;
+      }
       if (!p3) continue;
       const remain = energyForDistanceKWh(vehicle, p3.distanceKm, {
         terrainFactor: p3.meanTerrain,
@@ -484,8 +574,15 @@ function findTwoStops(
       const d2 = targetDepartSoc(vehicle, a2.socEnd, remain, desiredArrival);
       const a3 = simulatePath(vehicle, p3, d2, weather);
       if (!feasible(vehicle, a3.socEnd)) continue;
-      const via = pathViaStationIds(from, to, [s1.id, s2.id], traffic, req.preference);
+
+      let via: RoutedPath | null;
+      try {
+        via = await pathViaStations(originWp, destWp, [s1, s2], traffic);
+      } catch {
+        via = null;
+      }
       if (!via) continue;
+
       const stop1 = rankStations([
         {
           station: s1,
