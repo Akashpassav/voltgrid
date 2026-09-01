@@ -41,12 +41,19 @@ import { addMinutes } from "@/lib/utils/time";
 import { haversineKm } from "@/lib/utils/geo";
 
 // Caps how many nearby candidate stations get their own OSRM route computed
-// per request. Corridor routing kept this small implicitly (short corridor,
-// few nearby stations); state-wide OSRM routing can otherwise trigger dozens
-// of parallel requests to OSRM's public server on a long trip. Nearest-by-
-// availability heuristic keeps candidate quality reasonable while bounding
-// API load.
-const MAX_CANDIDATE_STATIONS = 15;
+// per request for the single-stop search. State-wide OSRM routing can
+// otherwise trigger many parallel requests to OSRM's public server on a
+// long trip. Candidates are spread across the route's length (see
+// pickSpreadAcrossRoute) rather than picked by score alone, so long trips
+// get coverage near both ends, not just wherever the highest-rated
+// stations happen to sit.
+const MAX_CANDIDATE_STATIONS = 18;
+
+// findTwoStops explores s1 × s2 pairs — this must stay much smaller than
+// MAX_CANDIDATE_STATIONS, since the search space grows quadratically and
+// each pair needs its own OSRM calls.
+const TWO_STOP_S1_LIMIT = 5;
+const TWO_STOP_S2_LIMIT = 6;
 
 interface SimLeg {
   path: RoutedPath;
@@ -114,10 +121,89 @@ async function pathViaStations(
   return routeViaWaypoints(waypoints, traffic);
 }
 
+/** Extracts one leg of a multi-waypoint OSRM route as a standalone RoutedPath,
+ * so candidate scoring can reuse a single via-route's data instead of making
+ * extra OSRM calls for each sub-segment. */
+function subPath(via: RoutedPath, legIndex: number): RoutedPath {
+  const leg = via.legs[legIndex];
+  return {
+    nodes: [leg.from, leg.to],
+    legs: [leg],
+    distanceKm: leg.edge.distanceKm,
+    baseMinutes: leg.edge.durationMinutes * via.meanTraffic,
+    meanTerrain: leg.edge.terrainFactor,
+    meanTraffic: via.meanTraffic,
+    geometry: [],
+  };
+}
+
 function nearPath(station: LiveStation, geometry: Coordinates[], maxKm = 4.2): boolean {
   return geometry.some(
     (p) => haversineKm(p, { lat: station.latitude, lng: station.longitude }) <= maxKm,
   );
+}
+
+/**
+ * Selects up to `limit` stations, distributed across the route's length by
+ * progress-along-path (not just by score), so long trips get candidates
+ * near both the start and the end — not just wherever the best-rated
+ * stations happen to sit. Uses wider buckets with up to 2 picks each,
+ * since a single pick-per-bucket proved fragile: if the lone highest-scored
+ * station in a segment was poorly positioned for a working route, the trip
+ * could look wrongly unreachable even with a decent alternative nearby.
+ */
+function pickSpreadAcrossRoute(
+  stations: LiveStation[],
+  geometry: Coordinates[],
+  limit: number,
+): LiveStation[] {
+  if (stations.length <= limit || geometry.length === 0) return stations;
+
+  const withProgress = stations.map((s) => {
+    let bestDist = Infinity;
+    let bestIndex = 0;
+    geometry.forEach((p, i) => {
+      const d = haversineKm(p, { lat: s.latitude, lng: s.longitude });
+      if (d < bestDist) {
+        bestDist = d;
+        bestIndex = i;
+      }
+    });
+    return { station: s, progress: bestIndex / Math.max(1, geometry.length - 1) };
+  });
+
+  const bucketCount = Math.max(1, Math.ceil(limit / 2));
+  const picksPerBucket = 2;
+  const buckets: (typeof withProgress)[] = Array.from({ length: bucketCount }, () => []);
+  withProgress.forEach((entry) => {
+    const bucketIdx = Math.min(bucketCount - 1, Math.floor(entry.progress * bucketCount));
+    buckets[bucketIdx].push(entry);
+  });
+
+  const picked: LiveStation[] = [];
+  for (const bucket of buckets) {
+    if (bucket.length === 0) continue;
+    bucket.sort((a, b) => b.station.predictedAvailability - a.station.predictedAvailability);
+    for (const entry of bucket.slice(0, picksPerBucket)) {
+      picked.push(entry.station);
+    }
+  }
+
+  // Buckets can be uneven (some empty, some with several stations) — if we
+  // haven't filled the limit yet, backfill with the next-best remaining
+  // candidates by score.
+  if (picked.length < limit) {
+    const pickedIds = new Set(picked.map((s) => s.id));
+    const remaining = withProgress
+      .filter((e) => !pickedIds.has(e.station.id))
+      .sort((a, b) => b.station.predictedAvailability - a.station.predictedAvailability);
+    for (const entry of remaining) {
+      if (picked.length >= limit) break;
+      picked.push(entry.station);
+    }
+  }
+
+  return picked.slice(0, limit);
 }
 
 function simulateWithStops(
@@ -282,12 +368,12 @@ export async function optimizeTrip(req: TripRequest): Promise<OptimizeResponse> 
       (s) => isStationOnline(s) && nearPath(s, direct.geometry, 4.5),
     );
 
-    // Bound how many candidates we send to OSRM individually — see
-    // MAX_CANDIDATE_STATIONS comment above.
+    // Bound how many candidates we send to OSRM individually, but spread the
+    // selection across the route's length rather than picking a flat top-N
+    // by score — otherwise a long trip can look falsely UNREACHABLE just
+    // because the highest-rated stations all happen to cluster near one end.
     if (online.length > MAX_CANDIDATE_STATIONS) {
-      online = [...online]
-        .sort((a, b) => b.predictedAvailability - a.predictedAvailability)
-        .slice(0, MAX_CANDIDATE_STATIONS);
+      online = pickSpreadAcrossRoute(online, direct.geometry, MAX_CANDIDATE_STATIONS);
     }
 
     if (online.length === 0) {
@@ -307,19 +393,17 @@ export async function optimizeTrip(req: TripRequest): Promise<OptimizeResponse> 
       online.map(async (station) => {
         const stationWp = stationWaypoint(station);
         let via: RoutedPath | null;
-        let toStation: RoutedPath | null;
-        let toDest: RoutedPath | null;
         try {
-          [via, toStation, toDest] = await Promise.all([
-            pathViaStations(originWp, destWp, [station], traffic),
-            routeViaWaypoints([originWp, stationWp], traffic),
-            routeViaWaypoints([stationWp, destWp], traffic),
-          ]);
+          via = await pathViaStations(originWp, destWp, [station], traffic);
         } catch (err) {
           console.error(`OSRM routing failed for candidate station ${station.id}:`, err);
           return null;
         }
-        if (!via || !toStation || !toDest) return null;
+        // Single OSRM call already gives us both legs' distance/duration —
+        // no need for two extra network round-trips per candidate.
+        if (!via || via.legs.length < 2) return null;
+        const toStation = subPath(via, 0);
+        const toDest = subPath(via, 1);
 
         const arrive = simulatePath(vehicle, toStation, req.socPercent, weather);
         if (!feasible(vehicle, arrive.socEnd)) return null;
@@ -525,90 +609,98 @@ async function findTwoStops(
       }
       if (!p) return null;
       const sim = simulatePath(vehicle, p, req.socPercent, weather);
-      return feasible(vehicle, sim.socEnd) ? station : null;
+      return feasible(vehicle, sim.socEnd) ? { station, path: p } : null;
     }),
   );
   const originReachable = reachableChecks
-    .filter((s): s is LiveStation => s !== null)
+    .filter((x): x is { station: LiveStation; path: RoutedPath } => x !== null)
     .sort(
-      (a, b) => b.predictedAvailability * b.reliabilityScore - a.predictedAvailability * a.reliabilityScore,
-    );
+      (a, b) =>
+        b.station.predictedAvailability * b.station.reliabilityScore -
+        a.station.predictedAvailability * a.station.reliabilityScore,
+    )
+    .slice(0, TWO_STOP_S1_LIMIT);
 
-  for (const s1 of originReachable.slice(0, 8)) {
+  const s2Candidates = online.slice(0, TWO_STOP_S2_LIMIT);
+
+  for (const { station: s1, path: p1 } of originReachable) {
     const s1Wp = stationWaypoint(s1);
-    let p1: RoutedPath | null;
-    try {
-      p1 = await routeBetween(originWp, s1Wp, traffic);
-    } catch {
-      p1 = null;
-    }
-    if (!p1) continue;
     const a1 = simulatePath(vehicle, p1, req.socPercent, weather);
     const d1 = targetDepartSoc(vehicle, a1.socEnd, vehicle.batteryKWh * 0.45, 40);
 
-    for (const s2 of online) {
-      if (s2.id === s1.id) continue;
-      const s2Wp = stationWaypoint(s2);
-      let p2: RoutedPath | null;
-      try {
-        p2 = await routeBetween(s1Wp, s2Wp, traffic);
-      } catch {
-        p2 = null;
-      }
-      if (!p2) continue;
-      const a2 = simulatePath(vehicle, p2, d1, weather);
-      if (!feasible(vehicle, a2.socEnd)) continue;
+    // All s2 candidates for this s1 are checked in parallel, instead of one
+    // at a time — this is what made the search take minutes at higher
+    // candidate counts.
+    const pairResults = await Promise.all(
+      s2Candidates
+        .filter((s2) => s2.id !== s1.id)
+        .map(async (s2) => {
+          const s2Wp = stationWaypoint(s2);
+          let p2: RoutedPath | null;
+          let p3: RoutedPath | null;
+          try {
+            [p2, p3] = await Promise.all([
+              routeBetween(s1Wp, s2Wp, traffic),
+              routeBetween(s2Wp, destWp, traffic),
+            ]);
+          } catch {
+            return null;
+          }
+          if (!p2 || !p3) return null;
 
-      let p3: RoutedPath | null;
-      try {
-        p3 = await routeBetween(s2Wp, destWp, traffic);
-      } catch {
-        p3 = null;
-      }
-      if (!p3) continue;
-      const remain = energyForDistanceKWh(vehicle, p3.distanceKm, {
-        terrainFactor: p3.meanTerrain,
-        trafficFactor: p3.meanTraffic,
-        weatherFactor: weather,
-      });
-      const d2 = targetDepartSoc(vehicle, a2.socEnd, remain, desiredArrival);
-      const a3 = simulatePath(vehicle, p3, d2, weather);
-      if (!feasible(vehicle, a3.socEnd)) continue;
+          const a2 = simulatePath(vehicle, p2, d1, weather);
+          if (!feasible(vehicle, a2.socEnd)) return null;
 
-      let via: RoutedPath | null;
-      try {
-        via = await pathViaStations(originWp, destWp, [s1, s2], traffic);
-      } catch {
-        via = null;
-      }
-      if (!via) continue;
+          const remain = energyForDistanceKWh(vehicle, p3.distanceKm, {
+            terrainFactor: p3.meanTerrain,
+            trafficFactor: p3.meanTraffic,
+            weatherFactor: weather,
+          });
+          const d2 = targetDepartSoc(vehicle, a2.socEnd, remain, desiredArrival);
+          const a3 = simulatePath(vehicle, p3, d2, weather);
+          if (!feasible(vehicle, a3.socEnd)) return null;
 
+          let via: RoutedPath | null;
+          try {
+            via = await pathViaStations(originWp, destWp, [s1, s2], traffic);
+          } catch {
+            via = null;
+          }
+          if (!via) return null;
+
+          return { s1, s2, p1, p2, p3, a1, a2, d1, d2, via };
+        }),
+    );
+
+    const found = pairResults.find((r): r is NonNullable<typeof r> => r !== null);
+    if (found) {
+      const { s1: fs1, s2: fs2, p1: fp1, p2: fp2, p3: fp3, a1: fa1, a2: fa2, d1: fd1, d2: fd2, via } = found;
       const stop1 = rankStations([
         {
-          station: s1,
+          station: fs1,
           detourKm: Math.max(0, via.distanceKm - direct.distanceKm) / 2,
           detourMinutes: 3,
-          arriveSocPercent: a1.socEnd,
-          distanceFromOriginKm: p1.distanceKm,
-          remainingToDestKm: p2.distanceKm + p3.distanceKm,
-          predictedAvailability: s1.predictedAvailability,
+          arriveSocPercent: fa1.socEnd,
+          distanceFromOriginKm: fp1.distanceKm,
+          remainingToDestKm: fp2.distanceKm + fp3.distanceKm,
+          predictedAvailability: fs1.predictedAvailability,
           preference: req.preference,
           vehicle,
-          targetDepartSoc: d1,
+          targetDepartSoc: fd1,
         },
       ])[0];
       const stop2 = rankStations([
         {
-          station: s2,
+          station: fs2,
           detourKm: 0.4,
           detourMinutes: 2,
-          arriveSocPercent: a2.socEnd,
-          distanceFromOriginKm: p1.distanceKm + p2.distanceKm,
-          remainingToDestKm: p3.distanceKm,
-          predictedAvailability: s2.predictedAvailability,
+          arriveSocPercent: fa2.socEnd,
+          distanceFromOriginKm: fp1.distanceKm + fp2.distanceKm,
+          remainingToDestKm: fp3.distanceKm,
+          predictedAvailability: fs2.predictedAvailability,
           preference: req.preference,
           vehicle,
-          targetDepartSoc: d2,
+          targetDepartSoc: fd2,
         },
       ])[0];
       return { path: via, stops: [stop1, stop2] };
