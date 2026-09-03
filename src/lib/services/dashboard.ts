@@ -72,8 +72,13 @@ export async function getDashboardMetrics(): Promise<DashboardMetrics> {
     alerts.unshift("High-demand scenario active: queues inflated across transit hubs.");
   }
 
+  const karnatakaStations = stations.filter((s) => s.city === "Bengaluru").length;
+  const tamilNaduStations = stations.length - karnatakaStations;
+
   return {
     totalChargers: stations.length,
+    tamilNaduStations,
+    karnatakaStations,
     available: counts.available,
     busy: counts.busy,
     offline: counts.offline,

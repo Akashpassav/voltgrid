@@ -27,7 +27,7 @@ export async function GET(req: Request) {
 
   const apiKey = process.env.OCM_API_KEY;
   if (!apiKey) {
-    return withCors(req, NextResponse.json({ stations: [], error: "OCM_API_KEY is not configured on the server." }, { status: 500 }));
+    return withCors(req, NextResponse.json({ stations: [], error: "Open Charge Map is not configured on the server." }, { status: 500 }));
   }
 
   const url = new URL("https://api.openchargemap.io/v3/poi/");

@@ -274,6 +274,15 @@ export interface RouteConfidence {
   }[];
 }
 
+export interface RouteAlternative {
+  label: string;
+  distanceKm: number;
+  drivingMinutes: number;
+  energyKWh: number;
+  arrivalSocPercent: number;
+  chargingStops: number;
+}
+
 export interface OptimizedRoute {
   origin: Place;
   destination: Place;
@@ -310,6 +319,9 @@ export interface OptimizedRoute {
   warnings: string[];
 
   nodePath: string[];
+
+  /** Other OSRM driving paths that also meet the arrival-SOC floor, when they differ. */
+  routeAlternatives: RouteAlternative[];
 }
 
 export interface VehicleRecommendation {
@@ -416,6 +428,8 @@ export interface SimulationScenario {
 
 export interface DashboardMetrics {
   totalChargers: number;
+  tamilNaduStations: number;
+  karnatakaStations: number;
   available: number;
   busy: number;
   offline: number;

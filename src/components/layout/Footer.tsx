@@ -16,16 +16,16 @@ export function Footer() {
         </div>
         <nav className="flex flex-wrap gap-4">
           <Link href="/planner" className="transition-colors hover:text-ink">
-            Planner
+            Route Planner
           </Link>
           <Link href="/infrastructure" className="transition-colors hover:text-ink">
             Infrastructure
           </Link>
           <Link href="/operator" className="transition-colors hover:text-ink">
-            Operator
+            Operator & Grid
           </Link>
           <Link href="/demo" className="transition-colors hover:text-ink">
-            Demo
+            Evaluator Sandbox
           </Link>
         </nav>
       </div>

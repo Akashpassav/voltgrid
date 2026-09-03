@@ -127,9 +127,100 @@ export const PLACES: Place[] = [
     longitude: 80.156,
     kind: "junction",
   },
+  {
+    id: "kanchipuram",
+    name: "Kanchipuram",
+    label: "Kanchipuram",
+    city: "Kanchipuram",
+    latitude: 12.8342,
+    longitude: 79.7036,
+    kind: "city",
+  },
+  {
+    id: "trichy",
+    name: "Tiruchirappalli",
+    label: "Trichy (Tiruchirappalli)",
+    city: "Tiruchirappalli",
+    latitude: 10.7905,
+    longitude: 78.7047,
+    kind: "city",
+  },
+  {
+    id: "thanjavur",
+    name: "Thanjavur",
+    label: "Thanjavur",
+    city: "Thanjavur",
+    latitude: 10.787,
+    longitude: 79.1378,
+    kind: "city",
+  },
+  {
+    id: "madurai",
+    name: "Madurai",
+    label: "Madurai",
+    city: "Madurai",
+    latitude: 9.9252,
+    longitude: 78.1198,
+    kind: "city",
+  },
+  {
+    id: "tirunelveli",
+    name: "Tirunelveli",
+    label: "Tirunelveli",
+    city: "Tirunelveli",
+    latitude: 8.7139,
+    longitude: 77.7567,
+    kind: "city",
+  },
+  {
+    id: "kanyakumari",
+    name: "Kanyakumari",
+    label: "Kanyakumari",
+    city: "Kanyakumari",
+    latitude: 8.0883,
+    longitude: 77.5385,
+    kind: "city",
+  },
+  {
+    id: "coimbatore",
+    name: "Coimbatore",
+    label: "Coimbatore",
+    city: "Coimbatore",
+    latitude: 11.0168,
+    longitude: 76.9558,
+    kind: "city",
+  },
+  {
+    id: "salem",
+    name: "Salem",
+    label: "Salem",
+    city: "Salem",
+    latitude: 11.6643,
+    longitude: 78.146,
+    kind: "city",
+  },
+  {
+    id: "bengaluru",
+    name: "Bengaluru",
+    label: "Bengaluru",
+    city: "Bengaluru",
+    latitude: 12.9716,
+    longitude: 77.5946,
+    kind: "city",
+  },
+  {
+    id: "puducherry",
+    name: "Puducherry",
+    label: "Puducherry",
+    city: "Puducherry",
+    latitude: 11.9344,
+    longitude: 79.8301,
+    kind: "city",
+  },
 ];
 
 export function getPlace(id: string): Place | undefined {
+  if (!id) return undefined;
   if (id.startsWith("custom:")) {
     // Format: custom:<lat>,<lng>[:<url-encoded label>].
     // The label suffix is optional so older custom IDs still resolve.
@@ -167,7 +258,13 @@ export function getPlace(id: string): Place | undefined {
     return undefined;
   }
 
-  return PLACES.find((p) => p.id === id);
+  const clean = id.trim().toLowerCase();
+  return PLACES.find(
+    (p) =>
+      p.id.toLowerCase() === clean ||
+      p.name.toLowerCase() === clean ||
+      p.city.toLowerCase() === clean,
+  );
 }
 
 /**

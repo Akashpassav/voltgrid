@@ -71,14 +71,26 @@ function withinBounds(
  * CCS/CHAdeMO/Type 1/Type 2/Tesla are 4W+ standards. When neither signal is
  * present, we default to "unspecified" rather than guess.
  */
-function inferVehicleType(connections: OCMConnection[] | undefined): VehicleCompatibility {
-  if (!connections || connections.length === 0) return "unspecified";
-  const titles = connections
-    .map((c) => c.ConnectionType?.Title?.toLowerCase() ?? "")
-    .filter(Boolean);
+function inferVehicleTypeFromTitles(titles: string[]): VehicleCompatibility {
+  if (!titles || titles.length === 0) return "unspecified";
+  const lower = titles.map((t) => t.toLowerCase());
 
-  const has2W = titles.some((t) => t.includes("bharat ac") || t.includes("bharat dc") || t.includes("2 wheel"));
-  const has4W = titles.some(
+  const has2W = lower.some(
+    (t) =>
+      t.includes("bharat ac") ||
+      t.includes("bharat dc") ||
+      t.includes("2 wheel") ||
+      t.includes("3 pin") ||
+      t.includes("3-pin") ||
+      t.includes("cee") ||
+      t.includes("socket") ||
+      t.includes("15a") ||
+      t.includes("type m") ||
+      t.includes("commando") ||
+      t.includes("type 2 (socket only)"),
+  );
+
+  const has4W = lower.some(
     (t) =>
       t.includes("ccs") ||
       t.includes("chademo") ||
@@ -92,6 +104,14 @@ function inferVehicleType(connections: OCMConnection[] | undefined): VehicleComp
   if (has2W) return "2-wheeler";
   if (has4W) return "4-wheeler";
   return "unspecified";
+}
+
+function inferVehicleType(connections: OCMConnection[] | undefined): VehicleCompatibility {
+  if (!connections || connections.length === 0) return "unspecified";
+  const titles = connections
+    .map((c) => c.ConnectionType?.Title ?? "")
+    .filter(Boolean);
+  return inferVehicleTypeFromTitles(titles);
 }
 
 function normalizePoi(poi: OCMPoi, region: CoverageStation["region"]): CoverageStation | null {
@@ -182,7 +202,14 @@ async function fetchFresh(): Promise<CoverageStation[]> {
 async function readCache(): Promise<{ stations: CoverageStation[]; fetchedAt: number } | null> {
   try {
     const raw = await fs.readFile(CACHE_FILE, "utf-8");
-    return JSON.parse(raw);
+    const data = JSON.parse(raw);
+    if (data && Array.isArray(data.stations)) {
+      data.stations = data.stations.map((s: CoverageStation) => ({
+        ...s,
+        vehicleType: inferVehicleTypeFromTitles(s.connectorTypes ?? []),
+      }));
+    }
+    return data;
   } catch {
     return null;
   }

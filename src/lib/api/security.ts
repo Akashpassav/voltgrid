@@ -12,9 +12,27 @@ export function resetRateLimits(): void {
   buckets.clear();
 }
 
+function trustForwardedClientIp(): boolean {
+  const flag = process.env.TRUST_PROXY?.trim().toLowerCase();
+  return flag === "1" || flag === "true";
+}
+
+/**
+ * Client identity for rate limiting.
+ * Forwarded IP headers are client-spoofable unless this process sits behind
+ * a trusted reverse proxy (`TRUST_PROXY=1`).
+ */
 export function clientKey(req: Request): string {
+  if (!trustForwardedClientIp()) return "anonymous";
   const forwarded = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
   return forwarded || req.headers.get("x-real-ip") || "anonymous";
+}
+
+function pruneExpiredBuckets(now: number): void {
+  if (buckets.size < 64) return;
+  for (const [key, bucket] of buckets) {
+    if (bucket.resetAt <= now) buckets.delete(key);
+  }
 }
 
 function allowedOrigins(): Set<string> {
@@ -35,6 +53,7 @@ export function apiGuard(req: Request, limit = DEFAULT_LIMIT): NextResponse | nu
   }
 
   const now = Date.now();
+  pruneExpiredBuckets(now);
   const key = `${req.method}:${req.url.split("?")[0]}:${clientKey(req)}`;
   const current = buckets.get(key);
   if (!current || current.resetAt <= now) {
@@ -45,7 +64,7 @@ export function apiGuard(req: Request, limit = DEFAULT_LIMIT): NextResponse | nu
   if (current.count > limit) {
     const response = NextResponse.json({ error: "Too many requests. Try again shortly." }, { status: 429 });
     response.headers.set("Retry-After", String(Math.ceil((current.resetAt - now) / 1000)));
-    return response;
+    return withCors(req, response);
   }
   return null;
 }

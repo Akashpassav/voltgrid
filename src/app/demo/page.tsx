@@ -25,23 +25,23 @@ export default function DemoPage() {
   return (
     <div className="mx-auto grid max-w-5xl gap-8 px-4 py-10 lg:grid-cols-2">
       <div>
-        <p className="text-xs uppercase tracking-[0.16em] text-mute">Presentation mode</p>
-        <h1 className="text-3xl font-semibold">SIH demo control panel</h1>
-        <p className="mt-2 text-sm text-mute">
-          Script: load the default Chennai → Chengalpattu trip, show VG-014, then simulate charger
-          failure and watch the engine pick an alternative.
+        <p className="text-xs uppercase tracking-[0.16em] text-volt font-semibold">Technical Demonstration Mode</p>
+        <h1 className="text-3xl font-bold tracking-tight text-ink">Evaluator & Presentation Sandbox</h1>
+        <p className="mt-2 text-sm text-mute leading-relaxed">
+          Demonstration workflow for evaluators and technical review panels: test battery-constrained stop placement, inspect real-time confidence scores, and simulate live charger outages to observe autonomous re-routing.
         </p>
-        <ol className="mt-4 list-decimal space-y-2 pl-5 text-sm text-mute">
-          <li>Keep Simulation Mode banner visible — never claim live CPO feeds.</li>
-          <li>Optimize Chennai → Chengalpattu at 68% on an Ather 450X.</li>
-          <li>Point at predicted availability and Route Confidence.</li>
-          <li>Click Simulate charger failure. VG-014 goes offline.</li>
-          <li>New stop, ETA, SOC and confidence update automatically.</li>
+        <ol className="mt-4 list-decimal space-y-2 pl-5 text-xs text-slate-300 leading-relaxed">
+          <li>Select a vehicle category: 2-Wheeler (e.g. Ather 450X) or 4-Wheeler (e.g. Tata Punch EV or Kia EV6).</li>
+          <li>Run route optimization and inspect the Arrival SoC, usable energy formula, and predicted availability.</li>
+          <li>In the Sandbox below, click <strong className="text-red-400">Simulate Outage</strong> to force the recommended charger offline.</li>
+          <li>VoltGrid detects the outage immediately and re-routes to the next optimal charging station.</li>
+          <li>Use <strong className="text-volt">Reset All</strong> to restore all charging infrastructure to normal baseline.</li>
         </ol>
         <div className="mt-6">
           <DemoControls
             trip={trip}
             recommendedId="VG-014"
+            defaultOpen={true}
             onResult={(result) => {
               saveResult(result);
               router.push("/route");

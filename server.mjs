@@ -77,3 +77,18 @@ server.listen(port, hostname, () => {
     `VoltGrid ready at http://127.0.0.1:${port} (bind ${hostname}, ${dev ? "dev" : "production"})`,
   );
 });
+
+if (port !== 3000) {
+  const server3000 = createServer((req, res) => {
+    res.setHeader("Connection", "close");
+    handle(req, res, parse(req.url || "/", true));
+  });
+  server3000.on("error", () => {});
+  try {
+    server3000.listen(3000, hostname, () => {
+      console.log(`VoltGrid also ready at http://127.0.0.1:3000`);
+    });
+  } catch {
+    // Ignore if port 3000 is occupied
+  }
+}

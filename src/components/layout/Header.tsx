@@ -8,8 +8,8 @@ import { cn } from "@/lib/utils/cn";
 const links = [
   { href: "/planner", label: "Route Planner" },
   { href: "/infrastructure", label: "Infrastructure" },
-  { href: "/operator", label: "Operator" },
-  { href: "/demo", label: "Demo Controls" },
+  { href: "/operator", label: "Operator & Grid" },
+  { href: "/demo", label: "Evaluator Sandbox" },
 ];
 
 export function Header() {

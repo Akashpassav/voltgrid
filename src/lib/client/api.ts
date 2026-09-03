@@ -56,8 +56,8 @@ export function loadResult(): OptimizeResponse | null {
 }
 
 export const DEFAULT_TRIP: TripRequest = {
-  originId: "chennai",
-  destinationId: "chengalpattu",
+  originId: "",
+  destinationId: "",
   vehicleId: "ather-450x",
   socPercent: 68,
   preference: "fastest" as DrivingPreference,

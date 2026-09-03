@@ -61,7 +61,9 @@ export function computeRouteConfidence(
   const altNote =
     alternatives === 0
       ? "no alternative chargers nearby"
-      : `${alternatives} alternative charging station${alternatives === 1 ? "" : "s"} within reach`;
+      : alternatives <= 8
+        ? `${alternatives} alternative charging station${alternatives === 1 ? "" : "s"} within ~12 km`
+        : "multiple charging stations within ~12 km of the destination";
 
   const explanation =
     level === "HIGH"

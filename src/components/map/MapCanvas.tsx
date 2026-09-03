@@ -219,6 +219,13 @@ function useRoadGeometry(waypoints: Coordinates[]): Coordinates[] {
       return;
     }
 
+    // If waypoints already contains detailed geometry points (>5), use it directly
+    // rather than sending thousands of points over the wire to OSRM.
+    if (waypoints.length > 5) {
+      setRoadGeometry(waypoints);
+      return;
+    }
+
     const coordsParam = waypoints
       .map((point) => `${point.lng},${point.lat}`)
       .join(";");

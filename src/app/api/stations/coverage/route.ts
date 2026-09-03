@@ -10,5 +10,12 @@ export async function GET(req: Request) {
   const parsed = parseQuery(req, emptyQuerySchema);
   if (parsed.response) return withCors(req, parsed.response);
   const { stations, stale, error } = await getStationCoverage();
-  return withCors(req, NextResponse.json({ stations, stale, error }));
+  return withCors(
+    req,
+    NextResponse.json({
+      stations,
+      stale,
+      error: error ? "Unable to refresh charging-station coverage." : null,
+    }),
+  );
 }

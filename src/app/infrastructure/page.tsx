@@ -52,20 +52,24 @@ export default function InfrastructurePage() {
   return (
     <div className="mx-auto max-w-7xl space-y-6 px-4 py-8">
       <div>
-        <p className="text-xs uppercase tracking-[0.16em] text-mute">Charger intelligence</p>
-        <h1 className="text-3xl font-semibold">Infrastructure dashboard</h1>
+        <p className="text-xs uppercase tracking-[0.16em] text-mute">CPO Network Analytics</p>
+        <h1 className="text-3xl font-semibold">Charging Infrastructure Intelligence</h1>
         <div className="mt-2 flex flex-wrap gap-2">
-          <Badge tone="mute">Locations: REAL / STATIC DATA</Badge>
-          <Badge tone="amber">Utilisation: SIMULATED LIVE DATA</Badge>
+          <Badge tone="mute">Coverage: 925+ Real CPO Locations</Badge>
+          <Badge tone="amber">Occupancy: Real-Time / Simulated Telemetry</Badge>
         </div>
       </div>
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
-        <Kpi label="Total chargers" value={metrics.totalChargers} />
-        <Kpi label="Available" value={metrics.available} />
-        <Kpi label="Busy / limited" value={metrics.busy + metrics.limited} />
-        <Kpi label="Offline" value={metrics.offline} />
-        <Kpi label="Avg utilisation" value={`${metrics.averageUtilization}%`} />
+        <Kpi label="Charging Stations" value={metrics.totalChargers} />
+        <Kpi label="Available Points" value={metrics.available} />
+        <Kpi label="Occupied / Limited" value={metrics.busy + metrics.limited} />
+        <Kpi label="Outage / Offline" value={metrics.offline} />
+        <Kpi label="Avg Hub Utilisation" value={`${metrics.averageUtilization}%`} />
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <Kpi label="Tamil Nadu Stations" value={metrics.tamilNaduStations} />
+        <Kpi label="Karnataka Stations" value={metrics.karnatakaStations} />
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2">

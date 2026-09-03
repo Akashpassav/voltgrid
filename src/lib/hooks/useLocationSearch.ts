@@ -8,10 +8,12 @@ export interface LocationSearchResult {
   lng: number;
 }
 
-// Soft-biased toward Tamil Nadu + Bengaluru combined (not a hard restriction —
-// Nominatim's viewbox without `bounded=1` nudges ranking, it doesn't exclude
-// results elsewhere, so a search for a genuinely different place still works).
-const VIEWBOX = "76.2,13.6,80.5,8.0"; // left,top,right,bottom
+// Bounding box covering Tamil Nadu, Puducherry, and Karnataka combined:
+// West: 74.0°E (coastal Karnataka / Karwar / Mangaluru)
+// North: 18.5°N (northern Karnataka / Bidar)
+// East: 80.5°E (coastal Tamil Nadu / Chennai)
+// South: 8.0°N (Kanyakumari)
+const VIEWBOX = "74.0,18.5,80.5,8.0"; // left(west),top(north),right(east),bottom(south)
 
 export function useLocationSearch(query: string) {
   const [results, setResults] = useState<LocationSearchResult[]>([]);
