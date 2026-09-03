@@ -2,6 +2,13 @@ import { z } from "zod";
 
 const id = z.string().trim().min(1).max(512);
 
+export const stationIdSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(80)
+  .regex(/^[A-Za-z0-9_-]+$/);
+
 export const tripRequestSchema = z.object({
   originId: id,
   destinationId: id,
@@ -15,25 +22,25 @@ export const tripRequestSchema = z.object({
 }).strict();
 
 export const predictSchema = z.object({
-  stationId: id,
+  stationId: stationIdSchema,
   etaMinutesFromNow: z.number().min(0).max(240).optional(),
 }).strict();
 
 export const simulateStatusSchema = z.object({
-  stationId: id,
+  stationId: stationIdSchema,
   status: z.enum(["available", "busy", "limited", "offline", "maintenance"]).optional(),
   action: z.enum(["fail", "restore"]).optional(),
 }).strict();
 
 export const scenarioSchema = z.object({
   action: z.enum(["fail-recommended", "fail-station", "high-demand", "traffic", "reset", "demo-clock", "live-clock"]),
-  stationId: id.optional(),
+  stationId: stationIdSchema.optional(),
   trip: tripRequestSchema.optional(),
 }).strict();
 
 export const rerouteSchema = z.object({
   trip: tripRequestSchema,
-  failedStationId: id.optional(),
+  failedStationId: stationIdSchema.optional(),
 }).strict();
 
 export const optimizeQuerySchema = z.object({
@@ -45,5 +52,5 @@ export const optimizeQuerySchema = z.object({
 }).strict();
 
 export const placesQuerySchema = z.object({ q: z.string().trim().max(120).default("") }).strict();
-export const stationIdPathSchema = z.object({ id }).strict();
+export const stationIdPathSchema = z.object({ id: stationIdSchema }).strict();
 export const emptyQuerySchema = z.object({}).strict();

@@ -8,7 +8,11 @@ const DEFAULT_LIMIT = 120;
 interface Bucket { count: number; resetAt: number }
 const buckets = new Map<string, Bucket>();
 
-function clientKey(req: Request): string {
+export function resetRateLimits(): void {
+  buckets.clear();
+}
+
+export function clientKey(req: Request): string {
   const forwarded = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
   return forwarded || req.headers.get("x-real-ip") || "anonymous";
 }
