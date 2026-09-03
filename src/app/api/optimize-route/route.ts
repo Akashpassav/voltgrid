@@ -1,59 +1,35 @@
 import { NextResponse } from "next/server";
-import { tripRequestSchema } from "@/lib/api/schemas";
+import { optimizeQuerySchema, tripRequestSchema } from "@/lib/api/schemas";
+import { apiGuard, corsOptions, parseJsonBody, parseQuery, withCors } from "@/lib/api/security";
 import { optimizeTrip } from "@/lib/services/optimize";
 
 export const dynamic = "force-dynamic";
 
+export async function OPTIONS(req: Request) { return corsOptions(req); }
+
 export async function POST(req: Request) {
+  const blocked = apiGuard(req);
+  if (blocked) return blocked;
+  const parsed = await parseJsonBody(req, tripRequestSchema);
+  if (parsed.response) return withCors(req, parsed.response);
   try {
-    const body = await req.json();
-    const parsed = tripRequestSchema.safeParse(body);
-    if (!parsed.success) {
-      return NextResponse.json(
-        {
-          ok: false,
-          code: "INVALID_BATTERY",
-          message: parsed.error.issues[0]?.message ?? "Invalid trip request.",
-          suggestions: ["Check origin, destination, vehicle and battery percentage."],
-        },
-        { status: 400 },
-      );
-    }
-    const result = await optimizeTrip(parsed.data);
+    const result = await optimizeTrip(parsed.data!);
     const status = result.ok ? 200 : 422;
-    return NextResponse.json(result, { status });
+    return withCors(req, NextResponse.json(result, { status }));
   } catch {
-    return NextResponse.json(
-      {
-        ok: false,
-        code: "NO_ROUTE",
-        message: "Routing failed unexpectedly. The corridor graph may be unavailable.",
-        suggestions: ["Retry, or reset the simulation from the demo panel."],
-      },
-      { status: 500 },
-    );
+    return withCors(req, NextResponse.json({ ok: false, code: "NO_ROUTE", message: "Routing failed unexpectedly.", suggestions: ["Retry, or reset the simulation."] }, { status: 500 }));
   }
 }
 
 export async function GET(req: Request) {
-  const { searchParams } = new URL(req.url);
-  const originId = searchParams.get("originId");
-  const destinationId = searchParams.get("destinationId");
-  const vehicleId = searchParams.get("vehicleId") ?? "ather-450x";
-  const socPercent = Number(searchParams.get("socPercent") ?? "68");
-  const preference = (searchParams.get("preference") ?? "fastest") as
-    | "fastest"
-    | "efficient"
-    | "reliability";
-  if (!originId || !destinationId) {
-    return NextResponse.json({ error: "originId and destinationId required" }, { status: 400 });
+  const blocked = apiGuard(req);
+  if (blocked) return blocked;
+  const parsed = parseQuery(req, optimizeQuerySchema);
+  if (parsed.response) return withCors(req, parsed.response);
+  try {
+    const result = await optimizeTrip(parsed.data!);
+    return withCors(req, NextResponse.json(result, { status: result.ok ? 200 : 422 }));
+  } catch {
+    return withCors(req, NextResponse.json({ ok: false, code: "NO_ROUTE", message: "Routing failed unexpectedly." }, { status: 500 }));
   }
-  const result = await optimizeTrip({
-    originId,
-    destinationId,
-    vehicleId,
-    socPercent,
-    preference,
-  });
-  return NextResponse.json(result, { status: result.ok ? 200 : 422 });
 }

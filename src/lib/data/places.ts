@@ -131,21 +131,70 @@ export const PLACES: Place[] = [
 
 export function getPlace(id: string): Place | undefined {
   if (id.startsWith("custom:")) {
-    const [latStr, lngStr] = id.slice("custom:".length).split(",");
+    // Format: custom:<lat>,<lng>[:<url-encoded label>].
+    // The label suffix is optional so older custom IDs still resolve.
+    const rest = id.slice("custom:".length);
+    const [coordsPart, ...labelParts] = rest.split(":");
+    const [latStr, lngStr] = coordsPart.split(",");
+
     const latitude = Number(latStr);
     const longitude = Number(lngStr);
+
     if (Number.isFinite(latitude) && Number.isFinite(longitude)) {
+      const encodedLabel = labelParts.join(":");
+
+      let name = "Current Location";
+
+      if (encodedLabel) {
+        try {
+          name = decodeURIComponent(encodedLabel);
+        } catch {
+          // Malformed encoding — keep the generic fallback.
+        }
+      }
+
       return {
         id,
-        name: "Current Location",
-        label: "Current Location",
-        city: "Current Location",
+        name,
+        label: name,
+        city: name,
         latitude,
         longitude,
         kind: "landmark",
       };
     }
+
     return undefined;
   }
+
   return PLACES.find((p) => p.id === id);
+}
+
+/**
+ * Search the seeded place catalogue.
+ *
+ * The API uses this for user-entered place queries.
+ * Matching is intentionally simple and deterministic so the
+ * simulation does not depend on an external search service.
+ */
+export function searchPlaces(query: string): Place[] {
+  const normalizedQuery = query.trim().toLowerCase();
+
+  if (!normalizedQuery) {
+    return PLACES;
+  }
+
+  return PLACES.filter((place) => {
+    const searchableText = [
+      place.id,
+      place.name,
+      place.label,
+      place.city,
+      place.kind,
+    ]
+      .join(" ")
+      .toLowerCase();
+
+    return searchableText.includes(normalizedQuery);
+  });
 }

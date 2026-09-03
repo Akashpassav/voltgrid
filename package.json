@@ -4,12 +4,13 @@
   "private": true,
   "description": "VoltGrid — EV Mobility Intelligence Platform for Indian electric 2-wheelers",
   "scripts": {
-    "dev": "node server.mjs --dev",
+    "dev": "node --dns-result-order=ipv4first server.mjs --dev",
     "build": "next build",
-    "start": "node server.mjs",
+    "start": "node --dns-result-order=ipv4first server.mjs",
     "lint": "eslint",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "typecheck":"tsc --noEmit"
   },
   "dependencies": {
     "class-variance-authority": "^0.7.1",

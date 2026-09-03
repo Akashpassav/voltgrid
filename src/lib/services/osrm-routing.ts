@@ -54,12 +54,24 @@ interface OsrmRoute {
   legs: OsrmLeg[];
 }
 
+async function fetchOSRM(url: string): Promise<Response> {
+  try {
+    return await fetch(url, { signal: AbortSignal.timeout(10000) });
+  } catch (err) {
+    // One retry — public OSRM can have transient connection hiccups, and on
+    // Windows a stalled IPv6 attempt can otherwise waste the whole timeout
+    // budget before falling back. A short second attempt is cheap insurance.
+    console.error("OSRM fetch failed, retrying once:", err);
+    return fetch(url, { signal: AbortSignal.timeout(10000) });
+  }
+}
+
 async function callOSRM(waypoints: RouteWaypoint[]): Promise<OsrmRoute | null> {
   if (waypoints.length < 2) return null;
   const coordsParam = waypoints.map((w) => `${w.longitude},${w.latitude}`).join(";");
   const url = `${OSRM_BASE}/${coordsParam}?overview=full&geometries=geojson&steps=false`;
 
-  const res = await fetch(url, { signal: AbortSignal.timeout(12000) });
+  const res = await fetchOSRM(url);
   if (!res.ok) {
     throw new Error(`OSRM responded with ${res.status}`);
   }

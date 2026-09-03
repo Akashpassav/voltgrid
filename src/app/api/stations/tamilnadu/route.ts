@@ -1,44 +1,33 @@
 import { NextResponse } from "next/server";
+import { emptyQuerySchema } from "@/lib/api/schemas";
+import { apiGuard, corsOptions, parseQuery, withCors } from "@/lib/api/security";
 
-// Simple in-memory cache so we don't hammer OCM's rate limit on every request.
 let cache: { data: unknown[]; fetchedAt: number } | null = null;
-const CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
+const CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 
-interface OCMConnection {
-  ConnectionType?: { Title?: string };
-  PowerKW?: number;
-}
-
+interface OCMConnection { ConnectionType?: { Title?: string }; PowerKW?: number }
 interface OCMPoi {
   ID: number;
-  AddressInfo: {
-    Title: string;
-    Latitude: number;
-    Longitude: number;
-    AddressLine1?: string;
-    Town?: string;
-  };
+  AddressInfo: { Title: string; Latitude: number; Longitude: number; AddressLine1?: string; Town?: string };
   OperatorInfo?: { Title?: string };
   Connections?: OCMConnection[];
   StatusType?: { IsOperational?: boolean };
 }
 
-export async function GET() {
+export async function OPTIONS(req: Request) { return corsOptions(req); }
+export async function GET(req: Request) {
+  const blocked = apiGuard(req, 10);
+  if (blocked) return blocked;
+  const parsed = parseQuery(req, emptyQuerySchema);
+  if (parsed.response) return withCors(req, parsed.response);
+
   if (cache && Date.now() - cache.fetchedAt < CACHE_TTL_MS) {
-    return NextResponse.json({ stations: cache.data, cached: true });
+    return withCors(req, NextResponse.json({ stations: cache.data, cached: true }));
   }
 
   const apiKey = process.env.OCM_API_KEY;
-  console.log(
-    "OCM key loaded:",
-    apiKey ? `${apiKey.slice(0, 6)}... (${apiKey.length} chars)` : "MISSING"
-  );
-
   if (!apiKey) {
-    return NextResponse.json(
-      { stations: [], error: "OCM_API_KEY is not configured on the server." },
-      { status: 500 }
-    );
+    return withCors(req, NextResponse.json({ stations: [], error: "OCM_API_KEY is not configured on the server." }, { status: 500 }));
   }
 
   const url = new URL("https://api.openchargemap.io/v3/poi/");
@@ -52,19 +41,11 @@ export async function GET() {
   url.searchParams.set("key", apiKey);
 
   try {
-   const res = await fetch(url.toString(), {
-  headers: { "X-API-Key": apiKey },
-  cache: "no-store",
-});
-
-    if (!res.ok) {
-      throw new Error(`OCM responded with ${res.status}`);
-    }
-
+    const res = await fetch(url.toString(), { headers: { "X-API-Key": apiKey }, cache: "no-store" });
+    if (!res.ok) throw new Error(`OCM responded with ${res.status}`);
     const raw: OCMPoi[] = await res.json();
-
     const normalized = raw
-      .filter((p) => p.AddressInfo?.Latitude && p.AddressInfo?.Longitude)
+      .filter((p) => Number.isFinite(p.AddressInfo?.Latitude) && Number.isFinite(p.AddressInfo?.Longitude))
       .map((p) => {
         const bestConnection = p.Connections?.[0];
         return {
@@ -83,14 +64,11 @@ export async function GET() {
           source: "openchargemap" as const,
         };
       });
-
     cache = { data: normalized, fetchedAt: Date.now() };
-    return NextResponse.json({ stations: normalized, cached: false });
+    return withCors(req, NextResponse.json({ stations: normalized, cached: false }));
   } catch (err) {
     console.error("Failed to fetch Open Charge Map data:", err);
-    if (cache) {
-      return NextResponse.json({ stations: cache.data, cached: true, stale: true });
-    }
-    return NextResponse.json({ stations: [], error: "Unable to reach Open Charge Map." }, { status: 502 });
+    if (cache) return withCors(req, NextResponse.json({ stations: cache.data, cached: true, stale: true }));
+    return withCors(req, NextResponse.json({ stations: [], error: "Unable to reach Open Charge Map." }, { status: 502 }));
   }
 }

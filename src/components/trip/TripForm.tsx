@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { VEHICLES } from "@/lib/data/vehicles";
+import { desiredChargePercent } from "@/lib/models/battery";
 import type { DrivingPreference, OptimizeResponse, TripRequest, Coordinates } from "@/lib/types";
 import { apiPost, DEFAULT_TRIP, saveResult, saveTrip } from "@/lib/client/api";
 import { Button } from "@/components/ui/button";
@@ -16,8 +17,8 @@ const PREFS: { id: DrivingPreference; label: string; hint: string }[] = [
   { id: "reliability", label: "Max charging reliability", hint: "Prefer predicted-available hubs" },
 ];
 
-function coordsToId(coords: Coordinates): string {
-  return `custom:${coords.lat.toFixed(6)},${coords.lng.toFixed(6)}`;
+function coordsToId(coords: Coordinates, label: string): string {
+  return `custom:${coords.lat.toFixed(6)},${coords.lng.toFixed(6)}:${encodeURIComponent(label)}`;
 }
 
 export function TripForm({
@@ -28,7 +29,12 @@ export function TripForm({
   submitLabel?: string;
 }) {
   const router = useRouter();
-  const [trip, setTrip] = useState<TripRequest>(initial);
+  const [trip, setTrip] = useState<TripRequest>(() => ({
+    ...initial,
+    arrivalSocPercent: initial.arrivalSocPercent ?? desiredChargePercent(VEHICLES.find((v) => v.id === initial.vehicleId) ?? VEHICLES[0]),
+    passengerCount: initial.passengerCount ?? 1,
+    cargoLoadKg: initial.cargoLoadKg ?? 0,
+  }));
   const [originLabel, setOriginLabel] = useState("");
   const [destinationLabel, setDestinationLabel] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -41,17 +47,17 @@ export function TripForm({
 
   function handleOriginSelect(label: string, coords: Coordinates) {
     setOriginLabel(label);
-    setTrip({ ...trip, originId: coordsToId(coords) });
+    setTrip({ ...trip, originId: coordsToId(coords, label) });
   }
 
   function handleDestinationSelect(label: string, coords: Coordinates) {
     setDestinationLabel(label);
-    setTrip({ ...trip, destinationId: coordsToId(coords) });
+    setTrip({ ...trip, destinationId: coordsToId(coords, label) });
   }
 
   function handleLocationButtonResolved(address: string, coords: Coordinates) {
     setOriginLabel(address);
-    setTrip({ ...trip, originId: coordsToId(coords) });
+    setTrip({ ...trip, originId: coordsToId(coords, address) });
   }
 
   async function onSubmit(e: React.FormEvent) {
@@ -102,7 +108,16 @@ export function TripForm({
         <select
           className="field"
           value={trip.vehicleId}
-          onChange={(e) => setTrip({ ...trip, vehicleId: e.target.value })}
+          onChange={(e) => {
+            const nextVehicle = VEHICLES.find((v) => v.id === e.target.value);
+            setTrip({
+              ...trip,
+              vehicleId: e.target.value,
+              arrivalSocPercent: nextVehicle ? desiredChargePercent(nextVehicle) : trip.arrivalSocPercent,
+              passengerCount: 1,
+              cargoLoadKg: 0,
+            });
+          }}
         >
           {VEHICLES.map((v) => (
             <option key={v.id} value={v.id}>
@@ -112,11 +127,40 @@ export function TripForm({
         </select>
         {vehicle && (
           <p className="mt-1 text-xs text-mute">
-            Base consumption {vehicle.baseConsumptionWhPerKm} Wh/km · safety reserve{" "}
+            Base consumption {vehicle.baseConsumptionWhPerKm} Wh/km · {vehicle.batteryProfile.chemistry} · default charge target {desiredChargePercent(vehicle)}% · safety reserve{" "}
             {vehicle.safetyReservePercent}% · max charge {vehicle.maxChargeKW} kW
           </p>
         )}
       </Field>
+
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Field label={vehicle?.class === "2W" ? "Riders" : "Occupants"}>
+          <select
+            className="field"
+            value={trip.passengerCount ?? 1}
+            onChange={(e) => setTrip({ ...trip, passengerCount: Number(e.target.value) })}
+          >
+            {Array.from({ length: vehicle?.class === "2W" ? 2 : 5 }, (_, i) => i + 1).map((count) => (
+              <option key={count} value={count}>
+                {count} {vehicle?.class === "2W" ? (count === 1 ? "rider" : "riders") : (count === 1 ? "occupant" : "occupants")}
+              </option>
+            ))}
+          </select>
+        </Field>
+        {vehicle?.class === "4W" && (
+          <Field label="Cargo load (optional)">
+            <input
+              type="number"
+              min={0}
+              max={500}
+              step={5}
+              className="field"
+              value={trip.cargoLoadKg ?? 0}
+              onChange={(e) => setTrip({ ...trip, cargoLoadKg: Number(e.target.value) })}
+            />
+          </Field>
+        )}
+      </div>
 
       <Field label={`Current battery · ${trip.socPercent}%`} icon={<Battery className="h-3.5 w-3.5" />}>
         <input
@@ -129,12 +173,12 @@ export function TripForm({
         />
       </Field>
 
-      <Field label="Desired arrival battery (optional)">
+      <Field label={`Desired arrival battery · model default ${vehicle ? desiredChargePercent(vehicle) : 80}%`}>
         <input
           type="number"
           min={0}
-          max={80}
-          placeholder={`${vehicle?.safetyReservePercent ?? 15}`}
+          max={95}
+          placeholder={`${vehicle ? desiredChargePercent(vehicle) : 80}`}
           className="field"
           value={trip.arrivalSocPercent ?? ""}
           onChange={(e) =>
@@ -144,6 +188,7 @@ export function TripForm({
             })
           }
         />
+        <p className="mt-1 text-xs leading-relaxed text-mute">Default varies by model and chemistry: the planner balances usable range with a conservative high-SOC charging window. You can override it for this trip.</p>
       </Field>
 
       <fieldset>

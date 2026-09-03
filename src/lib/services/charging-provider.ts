@@ -80,6 +80,7 @@ function coverageToLiveStation(s: CoverageStation): LiveStation {
     city: s.region === "bengaluru" ? "Bengaluru" : "Tamil Nadu",
     highway: "",
     provenance: "static_seed",
+    vehicleCompatibility: s.vehicleType,
     availableConnectors: s.availableConnectors,
     status: s.status,
     occupancyRatio: s.status === "offline" ? 1 : 0.2,

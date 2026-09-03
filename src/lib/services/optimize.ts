@@ -21,11 +21,14 @@ import { computeRouteConfidence } from "@/lib/models/confidence";
 import {
   chargeTimeMinutes,
   describeBattery,
+  desiredChargePercent,
   energyForDistanceKWh,
   socAfterEnergy,
 } from "@/lib/models/battery";
 import { gridHintForTrip } from "@/lib/models/grid";
 import { getChargingProvider } from "@/lib/services/charging-provider";
+import { findOvernightStays } from "@/lib/services/stays";
+import { recommendVehicleIfBetter } from "@/lib/services/vehicle-recommendation";
 import { getScenario, isStationOnline, simulationNow } from "@/lib/store/simulation";
 import type {
   ChargingStopPlan,
@@ -33,12 +36,13 @@ import type {
   LiveStation,
   OptimizeResponse,
   OptimizedRoute,
+  OvernightPlan,
   RouteLeg,
   TripRequest,
   Vehicle,
 } from "@/lib/types";
 import { addMinutes } from "@/lib/utils/time";
-import { haversineKm } from "@/lib/utils/geo";
+import { haversineKm, pointAtDistanceKm } from "@/lib/utils/geo";
 
 // Caps how many nearby candidate stations get their own OSRM route computed
 // per request for the single-stop search. State-wide OSRM routing can
@@ -71,11 +75,15 @@ function simulatePath(
   path: RoutedPath,
   startSoc: number,
   weatherFactor: number,
+  occupancyCount = 1,
+  cargoLoadKg = 0,
 ): SimLeg {
   const energy = energyForDistanceKWh(vehicle, path.distanceKm, {
     terrainFactor: averageTerrain(path),
     trafficFactor: path.meanTraffic,
     weatherFactor,
+    occupancyCount,
+    cargoLoadKg,
   });
   const socEnd = socAfterEnergy(vehicle, startSoc, energy);
   return { path, energyKWh: energy, socStart: startSoc, socEnd };
@@ -92,8 +100,11 @@ function targetDepartSoc(
   desiredArrival: number,
 ): number {
   const needPercent = (remainingEnergyKWh / vehicle.batteryKWh) * 100 + desiredArrival;
-  // Charge enough to finish, but never leave a 2W rider at a trickle — 72%+ is typical.
-  const want = Math.max(arriveSoc, Math.min(88, Math.max(needPercent + 10, 80)));
+  // Model-specific target replaces the old global 80–88% heuristic. We still
+  // charge enough to finish the remaining leg plus a small planning buffer.
+  const modelTarget = desiredChargePercent(vehicle);
+  const maxTarget = vehicle.batteryProfile.safeMaxSocPercent;
+  const want = Math.max(arriveSoc, Math.min(maxTarget, Math.max(needPercent + 10, modelTarget)));
   return Number(want.toFixed(1));
 }
 
@@ -141,6 +152,20 @@ function nearPath(station: LiveStation, geometry: Coordinates[], maxKm = 4.2): b
   return geometry.some(
     (p) => haversineKm(p, { lat: station.latitude, lng: station.longitude }) <= maxKm,
   );
+}
+
+/**
+ * A station with no compatibility data (older seed entries) or one marked
+ * "both"/"unspecified" is treated as usable by any vehicle class. Only a
+ * station explicitly inferred as 2-wheeler-only or 4-wheeler-only (from OCM
+ * connector data — see station-coverage.ts) excludes the other class, so a
+ * 4W trip isn't routed to a bike-only 15A socket and vice versa.
+ */
+function isVehicleCompatible(vehicle: Vehicle, station: LiveStation): boolean {
+  const compat = station.vehicleCompatibility;
+  if (!compat || compat === "both" || compat === "unspecified") return true;
+  if (compat === "4-wheeler") return vehicle.class === "4W";
+  return vehicle.class !== "4W"; // "2-wheeler"-only stations serve 2W and 3W
 }
 
 /**
@@ -213,6 +238,8 @@ function simulateWithStops(
   weather: number,
   stops: ChargingStopPlan[],
   trafficMultiplier: number,
+  occupancyCount = 1,
+  cargoLoadKg = 0,
 ): { legs: RouteLeg[]; geometry: Coordinates[]; energyKWh: number; drivingMinutes: number; arrivalSoc: number; minSoc: number } {
   const remaining = [...stops];
   let socCursor = startSoc;
@@ -235,6 +262,8 @@ function simulateWithStops(
       terrainFactor: leg.edge.terrainFactor,
       trafficFactor: path.meanTraffic,
       weatherFactor: weather,
+      occupancyCount,
+      cargoLoadKg,
     };
     const e = energyForDistanceKWh(vehicle, leg.edge.distanceKm, ctx);
     const socStart = socCursor;
@@ -323,7 +352,9 @@ export async function optimizeTrip(req: TripRequest): Promise<OptimizeResponse> 
   const scenario = getScenario();
   const traffic = scenario.trafficMultiplier;
   const weather = req.weatherFactor ?? 1;
-  const desiredArrival = req.arrivalSocPercent ?? vehicle.safetyReservePercent;
+  const desiredArrival = req.arrivalSocPercent ?? vehicle.batteryProfile.safeMinSocPercent;
+  const occupancyCount = req.passengerCount ?? 1;
+  const cargoLoadKg = req.cargoLoadKg ?? 0;
   const from: Coordinates = { lat: origin.latitude, lng: origin.longitude };
   const to: Coordinates = { lat: destination.latitude, lng: destination.longitude };
 
@@ -353,9 +384,11 @@ export async function optimizeTrip(req: TripRequest): Promise<OptimizeResponse> 
     terrainFactor: direct.meanTerrain,
     trafficFactor: direct.meanTraffic,
     weatherFactor: weather,
+    occupancyCount,
+    cargoLoadKg,
   });
 
-  const directSim = simulatePath(vehicle, direct, req.socPercent, weather);
+  const directSim = simulatePath(vehicle, direct, req.socPercent, weather, occupancyCount, cargoLoadKg);
   let chosenStops: ChargingStopPlan[] = [];
   let chosenPath = direct;
   const warnings: string[] = [];
@@ -365,7 +398,7 @@ export async function optimizeTrip(req: TripRequest): Promise<OptimizeResponse> 
     chosenStops = [];
   } else {
     let online = stations.filter(
-      (s) => isStationOnline(s) && nearPath(s, direct.geometry, 4.5),
+      (s) => isStationOnline(s) && nearPath(s, direct.geometry, 4.5) && isVehicleCompatible(vehicle, s),
     );
 
     // Bound how many candidates we send to OSRM individually, but spread the
@@ -390,11 +423,16 @@ export async function optimizeTrip(req: TripRequest): Promise<OptimizeResponse> 
     }
 
     const candidateResults = await Promise.all(
-      online.map(async (station) => {
-        const stationWp = stationWaypoint(station);
-        let via: RoutedPath | null;
-        try {
-          via = await pathViaStations(originWp, destWp, [station], traffic);
+  online.map(async (station) => {
+    let via: RoutedPath | null;
+
+    try {
+      via = await pathViaStations(
+        originWp,
+        destWp,
+        [station],
+        traffic,
+      );
         } catch (err) {
           console.error(`OSRM routing failed for candidate station ${station.id}:`, err);
           return null;
@@ -405,15 +443,17 @@ export async function optimizeTrip(req: TripRequest): Promise<OptimizeResponse> 
         const toStation = subPath(via, 0);
         const toDest = subPath(via, 1);
 
-        const arrive = simulatePath(vehicle, toStation, req.socPercent, weather);
+        const arrive = simulatePath(vehicle, toStation, req.socPercent, weather, occupancyCount, cargoLoadKg);
         if (!feasible(vehicle, arrive.socEnd)) return null;
         const remainingEnergy = energyForDistanceKWh(vehicle, toDest.distanceKm, {
           terrainFactor: toDest.meanTerrain,
           trafficFactor: toDest.meanTraffic,
           weatherFactor: weather,
+          occupancyCount,
+          cargoLoadKg,
         });
         const depart = targetDepartSoc(vehicle, arrive.socEnd, remainingEnergy, desiredArrival);
-        const after = simulatePath(vehicle, toDest, depart, weather);
+        const after = simulatePath(vehicle, toDest, depart, weather, occupancyCount, cargoLoadKg);
         if (!feasible(vehicle, after.socEnd)) return null;
         const detourKm = Math.max(0, via.distanceKm - direct.distanceKm);
         const detourMinutes = Math.max(0, via.baseMinutes - direct.baseMinutes);
@@ -473,16 +513,54 @@ export async function optimizeTrip(req: TripRequest): Promise<OptimizeResponse> 
         direct,
       );
       if (!twoStop) {
+        // The trip can't be completed today — before giving up, look for
+        // somewhere to stay overnight near the furthest point actually
+        // reachable on this battery, ideally near a charger, so the driver
+        // can charge overnight and continue the trip tomorrow instead of
+        // hitting a dead end.
+        const reachablePoint =
+          pointAtDistanceKm(direct.geometry, battery.estimatedRangeKm) ?? from;
+        let stays: Awaited<ReturnType<typeof findOvernightStays>> = [];
+        try {
+          stays = await findOvernightStays(reachablePoint, online);
+        } catch (err) {
+          console.error("Overnight stay lookup failed:", err);
+        }
+
+        const suggestions = [
+          `Charge locally before starting — usable range is about ${battery.estimatedRangeKm.toFixed(0)} km.`,
+          "Pick a closer destination.",
+          "Choose a vehicle with a larger pack (Simple One / Ola S1 Pro).",
+        ];
+        if (stays.length > 0) {
+          suggestions.unshift(
+            "Or stop for the night near a charger and continue the trip tomorrow — see recommended stays below.",
+          );
+        }
+
+        const vehicleRecommendation = recommendVehicleIfBetter({
+          vehicle,
+          distanceKm: direct.distanceKm,
+          chargingStopsCount: 0,
+          totalMinutes: null,
+          unreachable: true,
+        });
+
         return {
           ok: false,
           code: "UNREACHABLE",
           message:
             "Your current battery level cannot safely reach the destination. We found no reachable charger within the available range.",
-          suggestions: [
-            `Charge locally before starting — usable range is about ${battery.estimatedRangeKm.toFixed(0)} km.`,
-            "Pick a closer destination.",
-            "Choose a vehicle with a larger pack (Simple One / Ola S1 Pro).",
-          ],
+          suggestions,
+          overnightPlan:
+            stays.length > 0
+              ? {
+                  reachablePoint,
+                  reachableDistanceKm: Number(battery.estimatedRangeKm.toFixed(1)),
+                  stays,
+                }
+              : undefined,
+          vehicleRecommendation,
         };
       }
       chosenPath = twoStop.path;
@@ -498,6 +576,8 @@ export async function optimizeTrip(req: TripRequest): Promise<OptimizeResponse> 
     weather,
     chosenStops,
     traffic,
+    occupancyCount,
+    cargoLoadKg,
   );
   const { legs: routeLegs, energyKWh, drivingMinutes, arrivalSoc, minSoc } = simulated;
 
@@ -545,6 +625,39 @@ export async function optimizeTrip(req: TripRequest): Promise<OptimizeResponse> 
     warnings.push("You are close to the range limit. A charger on the route remains a useful safety net.");
   }
 
+  const vehicleRecommendation = recommendVehicleIfBetter({
+    vehicle,
+    distanceKm: chosenPath.distanceKm,
+    chargingStopsCount: filledStops.length,
+    totalMinutes,
+    unreachable: false,
+  });
+
+  // For a long day of driving (roughly 6+ hours total), suggest overnight
+  // stays near where that first day's drive would end — purely a
+  // convenience suggestion; the trip is still fully reachable today.
+  const LONG_TRIP_MINUTES = 6 * 60;
+  let overnightPlan: OvernightPlan | undefined;
+  if (totalMinutes > LONG_TRIP_MINUTES) {
+    const drivingShareKm =
+      (LONG_TRIP_MINUTES / Math.max(1, totalMinutes)) * chosenPath.distanceKm;
+    const restPoint = pointAtDistanceKm(chosenPath.geometry, drivingShareKm);
+    if (restPoint) {
+      try {
+        const stays = await findOvernightStays(restPoint, stations);
+        if (stays.length > 0) {
+          overnightPlan = {
+            reachablePoint: restPoint,
+            reachableDistanceKm: Number(drivingShareKm.toFixed(1)),
+            stays,
+          };
+        }
+      } catch (err) {
+        console.error("Overnight stay lookup failed for long-trip suggestion:", err);
+      }
+    }
+  }
+
   const route: OptimizedRoute = {
     origin,
     destination,
@@ -583,6 +696,8 @@ export async function optimizeTrip(req: TripRequest): Promise<OptimizeResponse> 
       prediction: "Logistic regression v1 — ML-ready feature schema",
       grid: "Grid Intelligence — Prototype Simulation (no live DISCOM feed)",
     },
+    vehicleRecommendation,
+    overnightPlan,
   };
 }
 
@@ -625,8 +740,13 @@ async function findTwoStops(
 
   for (const { station: s1, path: p1 } of originReachable) {
     const s1Wp = stationWaypoint(s1);
-    const a1 = simulatePath(vehicle, p1, req.socPercent, weather);
-    const d1 = targetDepartSoc(vehicle, a1.socEnd, vehicle.batteryKWh * 0.45, 40);
+    const a1 = simulatePath(vehicle, p1, req.socPercent, weather, req.passengerCount ?? 1, req.cargoLoadKg ?? 0);
+    const d1 = targetDepartSoc(
+      vehicle,
+      a1.socEnd,
+      vehicle.batteryKWh * 0.45,
+      Math.max(vehicle.batteryProfile.safeMinSocPercent, desiredChargePercent(vehicle) - 15),
+    );
 
     // All s2 candidates for this s1 are checked in parallel, instead of one
     // at a time — this is what made the search take minutes at higher
@@ -648,16 +768,18 @@ async function findTwoStops(
           }
           if (!p2 || !p3) return null;
 
-          const a2 = simulatePath(vehicle, p2, d1, weather);
+          const a2 = simulatePath(vehicle, p2, d1, weather, req.passengerCount ?? 1, req.cargoLoadKg ?? 0);
           if (!feasible(vehicle, a2.socEnd)) return null;
 
           const remain = energyForDistanceKWh(vehicle, p3.distanceKm, {
             terrainFactor: p3.meanTerrain,
             trafficFactor: p3.meanTraffic,
             weatherFactor: weather,
+            occupancyCount: req.passengerCount ?? 1,
+            cargoLoadKg: req.cargoLoadKg ?? 0,
           });
           const d2 = targetDepartSoc(vehicle, a2.socEnd, remain, desiredArrival);
-          const a3 = simulatePath(vehicle, p3, d2, weather);
+          const a3 = simulatePath(vehicle, p3, d2, weather, req.passengerCount ?? 1, req.cargoLoadKg ?? 0);
           if (!feasible(vehicle, a3.socEnd)) return null;
 
           let via: RoutedPath | null;

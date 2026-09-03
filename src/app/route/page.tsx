@@ -6,6 +6,8 @@ import { RouteMap } from "@/components/map/RouteMap";
 import { ConfidenceMeter } from "@/components/trip/ConfidenceMeter";
 import { ChargingStopCard } from "@/components/trip/ChargingStopCard";
 import { BatteryExplainer } from "@/components/trip/BatteryExplainer";
+import { OvernightStayCard } from "@/components/trip/OvernightStayCard";
+import { VehicleRecommendationCard } from "@/components/trip/VehicleRecommendationCard";
 import { DemoControls } from "@/components/demo/DemoControls";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -104,6 +106,16 @@ export default function RoutePage() {
             Adjust trip →
           </Link>
         </div>
+        {result.vehicleRecommendation && (
+          <div className="mt-4">
+            <VehicleRecommendationCard rec={result.vehicleRecommendation} />
+          </div>
+        )}
+        {result.overnightPlan && (
+          <div className="mt-4">
+            <OvernightStayCard plan={result.overnightPlan} />
+          </div>
+        )}
       </div>
     );
   }
@@ -177,6 +189,12 @@ export default function RoutePage() {
         ))}
 
         <p className="text-xs leading-relaxed text-mute">{route.gridHint}</p>
+
+        {result.vehicleRecommendation && (
+          <VehicleRecommendationCard rec={result.vehicleRecommendation} />
+        )}
+
+        {result.overnightPlan && <OvernightStayCard plan={result.overnightPlan} />}
 
         <div className="flex flex-wrap gap-1">
           <Badge tone="mute">Stations: static</Badge>
