@@ -1,0 +1,91 @@
+/**
+ * VoltGrid — Route page CSS overrides (NEW FILE)
+ *
+ * Fixes the long-address overflow in:
+ *   1. The sidebar <h1> (origin → destination route title)
+ *   2. The floating navigation panel origin text
+ *   3. The aside container preventing horizontal scroll
+ *
+ * Uses !important to override Tailwind v4 utility classes which otherwise
+ * have higher specificity than descendant selectors.
+ *
+ * Scoped to [data-vg-route] to avoid affecting any other page.
+ */
+
+/* ────────────────────────────────────────────────────────────────────────────
+   Sidebar route title h1
+   The h1 at route/page.tsx line 314 has class="mt-1 text-2xl font-bold text-ink"
+   It renders the full geocoded address: "7th Cross Road, Vignananagara,
+   Bengaluru East City Corporation, Bengaluru..." which overflows the panel.
+   We clamp it to 2 lines with ellipsis and size it responsively.
+   ──────────────────────────────────────────────────────────────────────────── */
+[data-vg-route] aside h1 {
+  /* Show the FULL address — no clipping, no ellipsis */
+  display: block !important;
+  overflow: visible !important;
+  white-space: normal !important;
+
+  /* Slightly smaller font than original text-2xl so it fits cleanly */
+  font-size: 1rem !important;
+  line-height: 1.45 !important;
+
+  /* Wrap long words/addresses — prevents horizontal overflow */
+  word-break: break-word !important;
+  overflow-wrap: break-word !important;
+  max-width: 100% !important;
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+   Aside container — hard-clamp width, prevent horizontal overflow
+   ──────────────────────────────────────────────────────────────────────────── */
+[data-vg-route] aside {
+  overflow-x: hidden !important;
+  max-width: 100% !important;
+}
+
+[data-vg-route] aside > * {
+  max-width: 100% !important;
+  overflow-wrap: break-word !important;
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+   Floating map navigation panel — the dark pill at the top of the map
+   The panel shows "Current Location — 7th Cross Road, Vignananagara…"
+   The origin text has class="truncate" but the parent isn't width-constrained.
+   ──────────────────────────────────────────────────────────────────────────── */
+[data-vg-route] .leaflet-top {
+  max-width: calc(100% - 60px) !important;
+}
+
+/* Target the floating nav panel's text container specifically */
+[data-vg-route] [class*="glass"] p,
+[data-vg-route] [class*="glass"] span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+   Global page overflow guard
+   ──────────────────────────────────────────────────────────────────────────── */
+[data-vg-route] {
+  max-width: 100vw;
+  overflow-x: hidden;
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+   Hide the origin→destination address text in the floating "Live Guidance Active"
+   bar. The user already sees the full route in the sidebar, so this line
+   is redundant and overflows on long geocoded addresses.
+
+   Target: the second <p> inside the div.truncate container in the floating panel.
+   route/page.tsx lines 209-215:
+     <div class="truncate">
+       <p ...>Live Guidance Active</p>   ← keep this
+       <p ...>{origin} → {destination}</p>  ← HIDE this
+     </div>
+   ──────────────────────────────────────────────────────────────────────────── */
+[data-vg-route] div.truncate > p + p {
+  display: none !important;
+}
+

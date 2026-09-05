@@ -55,6 +55,13 @@ export interface BatteryProfile {
   occupancyConsumptionCurve: OccupancyCurvePoint[];
 }
 
+export type StationCapability = "CHARGING" | "BATTERY_SWAP" | "CHARGING_AND_SWAP";
+
+export interface StationCapabilities {
+  charging: boolean;
+  batterySwap: boolean;
+}
+
 export interface ChargingStation {
   id: string;
   name: string;
@@ -81,6 +88,10 @@ export interface ChargingStation {
 
   /** Undefined (older seed data) is treated as compatible with every vehicle class. */
   vehicleCompatibility?: VehicleCompatibility;
+
+  /** Capability configuration for charging vs battery swapping */
+  capabilities?: StationCapabilities;
+  capability?: StationCapability;
 }
 
 export interface LiveStation extends ChargingStation {

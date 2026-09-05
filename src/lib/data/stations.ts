@@ -1,4 +1,4 @@
-import type { ChargingStation, ConnectorType, DemandProfile, StationStatus } from "@/lib/types";
+import type { ChargingStation, ConnectorType, DemandProfile, StationCapability, StationStatus } from "@/lib/types";
 
 interface Seed {
   id: string;
@@ -19,6 +19,7 @@ interface Seed {
   address: string;
   city: string;
   highway: string;
+  capability?: StationCapability;
 }
 
 const SEED: Seed[] = [
@@ -35,8 +36,8 @@ const SEED: Seed[] = [
   { id: "VG-011", name: "Pallavaram GST Charge", lat: 12.9675, lng: 80.1491, operator: "IOCL", connector: "Bharat AC-001", powerKW: 3.3, total: 3, available: 1, status: "limited", price: 12, queue: 14, profile: "highway", reliability: 0.71, amenity: "Fuel station", address: "GST Road, Pallavaram", city: "Pallavaram", highway: "GST Road" },
   { id: "VG-012", name: "Chromepet Market Hub", lat: 12.9516, lng: 80.1462, operator: "ChargeZone", connector: "15A Socket", powerKW: 3.3, total: 3, available: 1, status: "limited", price: 11, queue: 11, profile: "mall", reliability: 0.69, amenity: "Market street", address: "GST Road, Chromepet", city: "Chromepet", highway: "GST Road" },
   { id: "VG-013", name: "Tambaram Sanatorium Stop", lat: 12.933, lng: 80.122, operator: "Magenta ChargeGrid", connector: "15A Socket", powerKW: 3.3, total: 2, available: 1, status: "limited", price: 13, queue: 16, profile: "transit", reliability: 0.61, amenity: "Roadside bay", address: "GST Road, Sanatorium", city: "Tambaram", highway: "GST Road" },
-  { id: "VG-014", name: "Tambaram GST Hub", lat: 12.9249, lng: 80.104, operator: "VoltGrid Demo CPO", connector: "Type 2", powerKW: 7.2, total: 4, available: 3, status: "available", price: 12, queue: 5, profile: "transit", reliability: 0.93, amenity: "Highway hub + cafe", address: "GST Road, Tambaram", city: "Tambaram", highway: "GST Road" },
-  { id: "VG-015", name: "Tambaram West Bypass", lat: 12.922, lng: 80.088, operator: "Statiq", connector: "Bharat AC-001", powerKW: 3.3, total: 2, available: 1, status: "limited", price: 11, queue: 16, profile: "highway", reliability: 0.62, amenity: "Bypass lay-by", address: "Mudichur Road", city: "Tambaram", highway: "Bypass" },
+  { id: "VG-014", name: "Tambaram GST Energy Plaza (Charge + Swap)", lat: 12.9249, lng: 80.104, operator: "VoltGrid Demo CPO", connector: "Type 2", powerKW: 7.2, total: 4, available: 3, status: "available", price: 12, queue: 5, profile: "transit", reliability: 0.93, amenity: "Highway hub + swap kiosk + cafe", address: "GST Road, Tambaram", city: "Tambaram", highway: "GST Road", capability: "CHARGING_AND_SWAP" },
+  { id: "VG-015", name: "Tambaram Battery Smart Swap Point", lat: 12.922, lng: 80.088, operator: "Battery Smart", connector: "GB/T Swap", powerKW: 10, total: 6, available: 4, status: "available", price: 10, queue: 2, profile: "highway", reliability: 0.91, amenity: "Bypass battery exchange station", address: "Mudichur Road", city: "Tambaram", highway: "Bypass", capability: "BATTERY_SWAP" },
   { id: "VG-016", name: "Perungalathur Stop", lat: 12.9054, lng: 80.0947, operator: "BPCL", connector: "15A Socket", powerKW: 0.8, total: 2, available: 1, status: "available", price: 9, queue: 7, profile: "highway", reliability: 0.66, amenity: "Fuel pump", address: "GST Road, Perungalathur", city: "Perungalathur", highway: "GST Road" },
   { id: "VG-017", name: "Vandalur Zoo Gate", lat: 12.8913, lng: 80.081, operator: "Tata Power EZ Charge", connector: "Type 2", powerKW: 7.2, total: 3, available: 1, status: "busy", price: 14, queue: 18, profile: "mall", reliability: 0.62, amenity: "Zoo / weekend traffic", address: "GST Road, Vandalur", city: "Vandalur", highway: "GST Road" },
   { id: "VG-018", name: "Urapakkam Highway Charge", lat: 12.87, lng: 80.075, operator: "ChargeZone", connector: "Bharat AC-001", powerKW: 3.3, total: 2, available: 1, status: "limited", price: 12, queue: 9, profile: "highway", reliability: 0.7, amenity: "Highway retail", address: "GST Road, Urapakkam", city: "Urapakkam", highway: "GST Road" },
@@ -64,6 +65,12 @@ const SEED: Seed[] = [
   { id: "VG-040", name: "Thiruporur Cross", lat: 12.73, lng: 80.19, operator: "Statiq", connector: "Type 2", powerKW: 7.2, total: 2, available: 0, status: "offline", price: 13, queue: 0, profile: "highway", reliability: 0.48, amenity: "Town road", address: "OMR / Thiruporur", city: "Thiruporur", highway: "OMR" },
   { id: "VG-041", name: "Kanchipuram Road Spur", lat: 12.72, lng: 79.95, operator: "IOCL", connector: "15A Socket", powerKW: 3.3, total: 2, available: 1, status: "available", price: 11, queue: 5, profile: "highway", reliability: 0.7, amenity: "Fuel station", address: "SH 58 west of Chengalpattu", city: "Chengalpattu", highway: "SH 58" },
   { id: "VG-042", name: "Maraimalai Nagar Railway", lat: 12.801, lng: 80.025, operator: "Tata Power EZ Charge", connector: "Type 2", powerKW: 7.2, total: 3, available: 2, status: "available", price: 13, queue: 6, profile: "transit", reliability: 0.8, amenity: "Suburban rail", address: "MM Nagar station road", city: "Maraimalai Nagar", highway: "GST Road" },
+  { id: "VG-043", name: "Bengaluru Silk Board Sun Mobility Swap", lat: 12.9176, lng: 77.6234, operator: "Sun Mobility", connector: "GB/T Swap", powerKW: 12, total: 10, available: 7, status: "available", price: 10, queue: 2, profile: "transit", reliability: 0.94, amenity: "Transit interchange", address: "Outer Ring Road, Silk Board", city: "Bengaluru", highway: "Outer Ring Road", capability: "BATTERY_SWAP" },
+  { id: "VG-044", name: "Indiranagar 100ft Energy Hub (Charge + Swap)", lat: 12.9719, lng: 77.6412, operator: "Tata Power & Sun Mobility", connector: "CCS2", powerKW: 50, total: 6, available: 4, status: "available", price: 17, queue: 4, profile: "mall", reliability: 0.91, amenity: "Metro + Retail plaza", address: "100 Feet Road, Indiranagar", city: "Bengaluru", highway: "Old Airport Road", capability: "CHARGING_AND_SWAP" },
+  { id: "VG-045", name: "Electronic City Phase 1 Swap Station", lat: 12.8399, lng: 77.6770, operator: "Battery Smart", connector: "GB/T Swap", powerKW: 10, total: 8, available: 6, status: "available", price: 9, queue: 3, profile: "office", reliability: 0.92, amenity: "Tech park entrance", address: "Velankani Drive, E-City", city: "Bengaluru", highway: "Hosur Road", capability: "BATTERY_SWAP" },
+  { id: "VG-046", name: "Koramangala Sony World Charge + Swap", lat: 12.9352, lng: 77.6245, operator: "Ather & Bounce Swap", connector: "Type 2", powerKW: 22, total: 5, available: 3, status: "available", price: 15, queue: 5, profile: "mall", reliability: 0.89, amenity: "Commercial complex", address: "80 Feet Road, Koramangala", city: "Bengaluru", highway: "Inner Ring Road", capability: "CHARGING_AND_SWAP" },
+  { id: "VG-047", name: "Bengaluru Airport Expressway Fast Hub", lat: 13.1986, lng: 77.7066, operator: "Zeon Charging", connector: "CCS2", powerKW: 120, total: 6, available: 4, status: "available", price: 21, queue: 6, profile: "highway", reliability: 0.95, amenity: "Expressway food court", address: "KIAL Expressway, Devanahalli", city: "Bengaluru", highway: "NH 44", capability: "CHARGING" },
+  { id: "VG-048", name: "Hosur Border Swap & Fast Charge Plaza", lat: 12.7409, lng: 77.8253, operator: "Statiq & Sun Mobility", connector: "CCS2", powerKW: 60, total: 8, available: 5, status: "available", price: 16, queue: 4, profile: "highway", reliability: 0.90, amenity: "Highway rest area", address: "NH 44 Tamil Nadu–Karnataka Border", city: "Hosur", highway: "NH 44", capability: "CHARGING_AND_SWAP" },
 ];
 
 export const STATIONS: ChargingStation[] = SEED.map((s) => ({
@@ -86,6 +93,13 @@ export const STATIONS: ChargingStation[] = SEED.map((s) => ({
   city: s.city,
   highway: s.highway,
   provenance: "static_seed",
+  capability: s.capability,
+  capabilities: s.capability
+    ? {
+        charging: s.capability === "CHARGING" || s.capability === "CHARGING_AND_SWAP",
+        batterySwap: s.capability === "BATTERY_SWAP" || s.capability === "CHARGING_AND_SWAP",
+      }
+    : undefined,
 }));
 
 export function getStation(id: string): ChargingStation | undefined {
@@ -94,3 +108,4 @@ export function getStation(id: string): ChargingStation | undefined {
 
 export const DEMO_PRIMARY_STATION = "VG-014";
 export const DEMO_FALLBACK_STATION = "VG-021";
+

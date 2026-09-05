@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { RouteMap } from "@/components/map/RouteMap";
 import { ConfidenceMeter } from "@/components/trip/ConfidenceMeter";
@@ -8,6 +8,7 @@ import { ChargingStopCard } from "@/components/trip/ChargingStopCard";
 import { BatteryExplainer } from "@/components/trip/BatteryExplainer";
 import { OvernightStayCard } from "@/components/trip/OvernightStayCard";
 import { VehicleRecommendationCard } from "@/components/trip/VehicleRecommendationCard";
+import { EmergencyAssistance } from "@/components/trip/EmergencyAssistance";
 import { DemoControls } from "@/components/demo/DemoControls";
 import { Button } from "@/components/ui/button";
 import {
@@ -19,6 +20,8 @@ import {
 } from "@/lib/client/api";
 import type { LiveStation, OptimizeResponse, TripRequest } from "@/lib/types";
 import { formatDuration, formatTimeIst } from "@/lib/utils/time";
+import { useGeolocationContext } from "@/lib/context/GeolocationContext";
+import { haversineKm, isOffRoute, projectPointOnPolyline } from "@/lib/utils/geo";
 import { AlertTriangle, Bike, Car, ShieldCheck, Zap, ArrowLeft, RefreshCw } from "lucide-react";
 
 export default function RoutePage() {
@@ -27,6 +30,7 @@ export default function RoutePage() {
   const [notice, setNotice] = useState<string | null>(null);
   const [trip, setTrip] = useState<TripRequest | null>(null);
   const reroutedFor = useRef<string | null>(null);
+  const geo = useGeolocationContext();
 
   useEffect(() => {
     setResult(loadResult());
@@ -75,6 +79,42 @@ export default function RoutePage() {
     }
   }, [stations, result, trip]);
 
+  const currentRoute = result?.ok ? result.route : null;
+  const currentGeometry = currentRoute?.geometry;
+
+  // Calculate live route projection from GPS
+  const projection = useMemo(() => {
+    if (!currentGeometry || currentGeometry.length < 2 || !geo.position) {
+      return null;
+    }
+    return projectPointOnPolyline(geo.position, currentGeometry);
+  }, [currentGeometry, geo.position]);
+
+  const userIsOffRoute = projection ? isOffRoute(projection.distanceFromRouteKm, 400) : false;
+
+  const handleRecalculateFromUserLocation = async () => {
+    if (!geo.position || !trip) return;
+    const customOriginId = `custom:${geo.position.lat},${geo.position.lng}:Current Location`;
+    const updatedTrip: TripRequest = {
+      ...trip,
+      originId: customOriginId,
+    };
+    setNotice("Recalculating route from your current GPS location…");
+    try {
+      const res = await apiPost<OptimizeResponse>("/api/optimize-route", updatedTrip);
+      saveResult(res);
+      setResult(res);
+      if (res.ok) {
+        setNotice(`✅ Route recalculated from your current position (${res.route.distanceKm} km remaining).`);
+      } else {
+        setNotice(`⚠ Recalculation note: ${res.message}`);
+      }
+    } catch (err) {
+      console.error("Failed to recalculate:", err);
+      setNotice("⚠ Recalculation failed. Please check network connection.");
+    }
+  };
+
   if (!result) {
     return (
       <div className="mx-auto max-w-lg px-4 py-16 text-center">
@@ -93,7 +133,7 @@ export default function RoutePage() {
 
   if (!result.ok) {
     return (
-      <div className="mx-auto max-w-xl px-4 py-16">
+      <div className="mx-auto max-w-2xl px-4 py-12 space-y-6">
         <div className="rounded-xl border border-danger/40 bg-danger/10 p-5 shadow-xl">
           <p className="flex items-center gap-2 font-semibold text-danger">
             <AlertTriangle className="h-5 w-5" />
@@ -113,6 +153,16 @@ export default function RoutePage() {
             Adjust trip parameters or select another EV
           </Link>
         </div>
+
+        {/* Dedicated EV Emergency & Stranded Recovery Section */}
+        <EmergencyAssistance
+          currentPosition={geo.position}
+          stations={stations}
+          socPercent={trip?.socPercent ?? 5}
+          isUnreachable={result.code === "UNREACHABLE" || result.code === "NO_CHARGER"}
+          defaultExpanded={true}
+        />
+
         {result.vehicleRecommendation && (
           <div className="mt-4">
             <VehicleRecommendationCard rec={result.vehicleRecommendation} />
@@ -131,18 +181,105 @@ export default function RoutePage() {
   const recIds = result.recommendedStationIds;
   const is4W = route.vehicle.class === "4W";
 
+  const nextStop = route.chargingStops[0];
+  const nextStopDistanceKm = nextStop && geo.position
+    ? Number((haversineKm(geo.position, { lat: nextStop.latitude, lng: nextStop.longitude }) * 1.15).toFixed(1))
+    : nextStop
+    ? Number((nextStop.detourKm + 12).toFixed(1))
+    : null;
+
+  const progressPercent = projection ? Math.round(projection.fraction * 100) : 0;
+  const remainingMinutes = projection
+    ? Math.max(1, Math.round(route.totalMinutes * (1 - projection.fraction)))
+    : route.totalMinutes;
+
   return (
-    <div className="flex min-h-[calc(100vh-6rem)] flex-col lg:flex-row">
+    <div className="flex min-h-[calc(100vh-6rem)] flex-col lg:flex-row relative">
       {/* ── INTERACTIVE ROAD MAP ── */}
       <div className="relative h-[48vh] lg:h-[calc(100vh-5.75rem)] lg:flex-1">
-        <RouteMap stations={stations} route={route} recommendedIds={recIds} />
-        <div className="pointer-events-none absolute left-3 top-3 flex flex-wrap gap-1 shadow-md">
-          <Legend color="#3ddc97" label="Available CPO" />
-          <Legend color="#f5a524" label="High Queue" />
-          <Legend color="#f04343" label="Outage / Offline" />
-          <Legend color="#4c8dff" label="Planned Stop" />
-          <Legend color="#6b7c93" label="Maintenance" />
+        {/* Floating Top Navigation Panel */}
+        <div className="absolute top-3 left-3 right-3 z-[900] pointer-events-auto flex flex-col gap-2 max-w-xl mx-auto">
+          <div className="rounded-2xl border border-line/80 bg-navy-950/90 p-3 shadow-2xl backdrop-blur-md">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <span className="relative flex h-2.5 w-2.5 shrink-0">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-volt opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-volt"></span>
+                </span>
+                <div className="truncate">
+                  <p className="text-[10px] uppercase tracking-wider font-bold text-volt leading-none">
+                    {geo.position ? "Live Guidance Active" : "Planned Route Ready"}
+                  </p>
+                  <p className="text-xs font-bold text-ink truncate mt-0.5">
+                    {route.origin.name} → {route.destination.name}
+                  </p>
+                </div>
+              </div>
+
+              <div className="text-right shrink-0">
+                <p className="text-sm font-bold font-mono text-ink">
+                  {projection ? `${projection.remainingRouteKm} km left` : `${route.distanceKm} km`}
+                </p>
+                <p className="text-[10px] text-mute font-medium">
+                  ~{formatDuration(remainingMinutes)}
+                </p>
+              </div>
+            </div>
+
+            {/* Route Progress Visual Bar */}
+            <div className="mt-2.5">
+              <div className="flex justify-between text-[10px] text-mute mb-1 font-mono">
+                <span>{projection ? `${projection.distanceAlongRouteKm} km traveled` : "0 km"}</span>
+                <span className="text-volt font-semibold">{progressPercent}% along route</span>
+                <span>{route.destination.name}</span>
+              </div>
+              <div className="h-1.5 w-full rounded-full bg-navy-800 overflow-hidden">
+                <div
+                  className="h-full bg-gradient-to-r from-volt to-emerald-400 transition-all duration-500 rounded-full"
+                  style={{ width: `${Math.max(3, Math.min(100, progressPercent))}%` }}
+                />
+              </div>
+            </div>
+
+            {/* Next Energy Stop Indicator */}
+            {nextStop && (
+              <div className="mt-2 pt-1.5 border-t border-line/40 flex items-center justify-between text-[11px]">
+                <span className="flex items-center gap-1.5 text-mute truncate max-w-[220px]">
+                  <Zap className="h-3.5 w-3.5 text-volt shrink-0" />
+                  Next: <strong className="text-ink font-semibold truncate">{nextStop.stationName}</strong>
+                </span>
+                <span className="font-mono text-volt font-semibold shrink-0">
+                  {nextStopDistanceKm !== null ? `~${nextStopDistanceKm} km ahead` : "Upcoming"}
+                </span>
+              </div>
+            )}
+          </div>
+
+          {/* Off-Route Alert Banner */}
+          {userIsOffRoute && (
+            <div className="rounded-xl border border-warn/70 bg-warn/15 p-2.5 text-xs text-ink shadow-2xl backdrop-blur flex items-center justify-between gap-3 animate-in fade-in slide-in-from-top-2">
+              <div className="flex items-center gap-2">
+                <AlertTriangle className="h-4 w-4 text-warn shrink-0" />
+                <div>
+                  <p className="font-bold text-warn text-xs leading-tight">You&apos;re off route</p>
+                  <p className="text-[10px] text-mute leading-tight">
+                    ~{Math.round(projection!.distanceFromRouteKm * 1000)}m away from planned corridor.
+                  </p>
+                </div>
+              </div>
+              <Button
+                type="button"
+                size="sm"
+                className="bg-warn text-navy-950 hover:bg-warn/90 font-bold text-xs h-6 px-2.5 shadow"
+                onClick={handleRecalculateFromUserLocation}
+              >
+                Recalculate
+              </Button>
+            </div>
+          )}
         </div>
+
+        <RouteMap stations={stations} route={route} recommendedIds={recIds} />
       </div>
 
       {/* ── ROUTE DETAILS & SIDEBAR ── */}
@@ -195,12 +332,12 @@ export default function RoutePage() {
         {/* Route Confidence Meter */}
         <ConfidenceMeter confidence={route.confidence} />
 
-        {/* Planned Charging Stops List (Supports Single or Multi-Stop) */}
+        {/* Planned Charging / Energy Stops List (Supports Single or Multi-Stop) */}
         {route.chargingStops.length > 0 ? (
           <div className="space-y-3">
             <p className="text-xs uppercase tracking-[0.14em] text-mute flex items-center gap-1.5 font-semibold">
               <Zap className="h-3.5 w-3.5 text-volt" />
-              Planned Charging Infrastructure ({route.chargingStops.length})
+              Planned Energy Infrastructure ({route.chargingStops.length})
             </p>
             {route.chargingStops.map((stop, idx) => (
               <ChargingStopCard
@@ -208,6 +345,7 @@ export default function RoutePage() {
                 stop={stop}
                 stopNumber={idx + 1}
                 totalStops={route.chargingStops.length}
+                vehicleClass={route.vehicle.class}
               />
             ))}
           </div>
@@ -242,6 +380,16 @@ export default function RoutePage() {
 
         {/* Battery & Range First-Principles Explainer */}
         <BatteryExplainer battery={route.battery} />
+
+        {/* EV Emergency / Helpline Assistance */}
+        <EmergencyAssistance
+          currentPosition={geo.position}
+          stations={stations}
+          socPercent={route.arrivalSocPercent}
+          estimatedRangeKm={route.battery.estimatedRangeKm}
+          destinationDistKm={projection ? projection.remainingRouteKm : route.distanceKm}
+          defaultExpanded={route.arrivalSocPercent <= 15}
+        />
 
         {/* Warnings */}
         {route.warnings.map((w) => (
@@ -284,14 +432,5 @@ function Stat({ label, value, highlight = false }: { label: string; value: strin
       <p className="text-[10px] uppercase tracking-wide text-mute">{label}</p>
       <p className={`mt-0.5 font-semibold text-sm ${highlight ? "text-volt font-mono" : "text-ink"}`}>{value}</p>
     </div>
-  );
-}
-
-function Legend({ color, label }: { color: string; label: string }) {
-  return (
-    <span className="pointer-events-none inline-flex items-center gap-1.5 rounded-full bg-navy-950/90 px-2.5 py-1 text-[10px] text-ink border border-line/60">
-      <span className="h-2 w-2 rounded-full" style={{ background: color }} />
-      {label}
-    </span>
   );
 }

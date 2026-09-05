@@ -9,12 +9,16 @@ export function ChargingStopCard({
   stop,
   stopNumber = 1,
   totalStops = 1,
+  vehicleClass = "2W",
 }: {
   stop: ChargingStopPlan;
   stopNumber?: number;
   totalStops?: number;
+  vehicleClass?: "2W" | "3W" | "4W";
 }) {
   const isDC = stop.powerKW >= 25;
+  const is2W = vehicleClass === "2W" || vehicleClass === "3W";
+  const hasSwap = stop.connectorType === "GB/T Swap" || stop.stationName.toLowerCase().includes("swap");
 
   return (
     <div className="rounded-xl border border-info/40 bg-navy-900/90 p-4 shadow-lg backdrop-blur-sm transition-all hover:border-info/60">
@@ -23,14 +27,16 @@ export function ChargingStopCard({
           <div className="flex items-center gap-1.5 flex-wrap">
             <span className="inline-flex items-center gap-1 rounded-full bg-info/10 border border-info/30 px-2 py-0.5 text-[11px] font-semibold text-info">
               <Zap className="h-3 w-3 text-info" />
-              {totalStops > 1 ? `Charging Stop ${stopNumber} of ${totalStops}` : "Recommended Charging Stop"}
+              {totalStops > 1 ? `Energy Stop ${stopNumber} of ${totalStops}` : "Recommended Energy Stop"}
             </span>
             <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium border ${
               isDC
                 ? "bg-amber-500/10 border-amber-500/30 text-amber-400"
+                : hasSwap
+                ? "bg-purple-500/10 border-purple-500/30 text-purple-400"
                 : "bg-emerald-500/10 border-emerald-500/30 text-emerald-400"
             }`}>
-              {isDC ? "DC Fast Charging" : "Standard AC Charging"}
+              {hasSwap ? "Battery Swap Supported" : isDC ? "DC Fast Charging" : "Standard AC Charging"}
             </span>
           </div>
 
@@ -53,6 +59,41 @@ export function ChargingStopCard({
           </p>
         </div>
       </div>
+
+      {/* Energy Stop Mode Comparison for 2W */}
+      {is2W && (
+        <div className="mt-3 rounded-lg bg-navy-950/90 p-2.5 border border-line/50 space-y-2">
+          <p className="text-[10px] uppercase font-bold tracking-wider text-mute flex items-center justify-between">
+            <span>Energy Stop Options</span>
+            <span className="text-volt font-medium">Light EV (2W)</span>
+          </p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+            <div className="rounded-md bg-navy-900/90 p-2 border border-emerald-500/30">
+              <div className="flex items-center justify-between">
+                <span className="font-semibold text-emerald-400 flex items-center gap-1 text-[11px]">
+                  ⚡ Option 1: Plug-in Charge
+                </span>
+                <span className="text-[10px] font-mono text-ink">~{stop.chargeMinutes} min</span>
+              </div>
+              <p className="text-[10px] text-mute mt-1">
+                Standard recharge from {stop.arriveSocPercent.toFixed(0)}% to {stop.departSocPercent.toFixed(0)}% (+{stop.energyAddedKWh} kWh).
+              </p>
+            </div>
+
+            <div className="rounded-md bg-navy-900/90 p-2 border border-purple-500/30">
+              <div className="flex items-center justify-between">
+                <span className="font-semibold text-purple-400 flex items-center gap-1 text-[11px]">
+                  🔋 Option 2: Battery Swap
+                </span>
+                <span className="text-[10px] font-mono text-purple-300">~3–5 min</span>
+              </div>
+              <p className="text-[10px] text-mute mt-1">
+                Rapid battery replacement for swappable 2W fleets. Minimal wait time.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Charging Session Parameters */}
       <div className="mt-3 rounded-lg bg-navy-950/80 p-2.5 border border-line/50">

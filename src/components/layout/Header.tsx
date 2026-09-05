@@ -10,6 +10,7 @@ const links = [
   { href: "/infrastructure", label: "Infrastructure" },
   { href: "/operator", label: "Operator & Grid" },
   { href: "/demo", label: "Evaluator Sandbox" },
+  { href: "/helpline", label: "EV Helpline" },
 ];
 
 export function Header() {
