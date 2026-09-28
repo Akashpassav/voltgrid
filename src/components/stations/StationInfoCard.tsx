@@ -17,6 +17,7 @@
  *   <StationInfoCard station={liveStation} userDistanceKm={2.4} />
  */
 
+import { useState } from "react";
 import type { LiveStation } from "@/lib/types";
 import { getStationCapability } from "@/lib/models/station-capability";
 import {
@@ -32,8 +33,10 @@ import {
   Wifi,
   WifiOff,
   AlertCircle,
+  Calendar,
 } from "lucide-react";
 import Link from "next/link";
+import { SlotBookingModal } from "@/components/booking/SlotBookingModal";
 
 interface StationInfoCardProps {
   station: LiveStation;
@@ -80,6 +83,7 @@ export function StationInfoCard({
   userDistanceKm,
   isRecommended = false,
 }: StationInfoCardProps) {
+  const [bookingOpen, setBookingOpen] = useState(false);
   const cap = getStationCapability(station);
   const sm = statusMeta(station.status);
 
@@ -343,11 +347,20 @@ export function StationInfoCard({
 
       {/* ── ACTIONS ── */}
       <div className="px-3.5 pb-3.5 pt-1 border-t border-line/40 flex items-center gap-2 flex-wrap">
+        <button
+          type="button"
+          onClick={() => setBookingOpen(true)}
+          className="inline-flex items-center gap-1.5 rounded-lg bg-gradient-to-r from-volt to-emerald-400 px-3 py-1.5 text-[11px] font-bold text-navy-950 shadow-sm hover:brightness-110 transition-all"
+        >
+          <Calendar className="h-3 w-3" />
+          Book Slot
+        </button>
+
         <a
           href={mapsUrl}
           target="_blank"
           rel="noopener noreferrer"
-          className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-[11px] font-semibold text-white hover:bg-blue-500 transition-colors shadow-sm"
+          className="inline-flex items-center gap-1.5 rounded-lg bg-navy-800 border border-line px-3 py-1.5 text-[11px] font-semibold text-white hover:bg-navy-700 transition-colors shadow-sm"
         >
           <Navigation className="h-3 w-3" />
           Navigate
@@ -360,6 +373,12 @@ export function StationInfoCard({
           Full Analytics →
         </Link>
       </div>
+
+      <SlotBookingModal
+        station={station}
+        isOpen={bookingOpen}
+        onClose={() => setBookingOpen(false)}
+      />
     </article>
   );
 }
