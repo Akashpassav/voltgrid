@@ -35,20 +35,49 @@ function pruneExpiredBuckets(now: number): void {
   }
 }
 
-function allowedOrigins(): Set<string> {
+export function isAllowedOrigin(origin: string | null, req?: Request): boolean {
+  if (!origin) return true;
+
   const configured = process.env.NEXT_PUBLIC_APP_URL?.trim();
-  return new Set([
+  const staticOrigins = new Set([
     ...(configured ? [configured.replace(/\/$/, "")] : []),
     "http://localhost:3000",
     "http://127.0.0.1:3000",
     "http://localhost:43123",
     "http://127.0.0.1:43123",
   ]);
+
+  if (staticOrigins.has(origin)) return true;
+
+  try {
+    const originUrl = new URL(origin);
+
+    // Allow all Vercel deployment preview and production domains
+    if (originUrl.hostname.endsWith(".vercel.app")) {
+      return true;
+    }
+
+    // Allow same-host origin requests
+    if (req) {
+      const host = req.headers.get("host") || new URL(req.url).host;
+      if (host && (originUrl.host === host || originUrl.hostname === host.split(":")[0])) {
+        return true;
+      }
+    }
+
+    if (process.env.VERCEL_URL && originUrl.hostname === process.env.VERCEL_URL.replace(/\/$/, "")) {
+      return true;
+    }
+  } catch {
+    return false;
+  }
+
+  return false;
 }
 
 export function apiGuard(req: Request, limit = DEFAULT_LIMIT): NextResponse | null {
   const origin = req.headers.get("origin");
-  if (origin && !allowedOrigins().has(origin)) {
+  if (origin && !isAllowedOrigin(origin, req)) {
     return NextResponse.json({ error: "Origin not allowed" }, { status: 403 });
   }
 
@@ -71,7 +100,7 @@ export function apiGuard(req: Request, limit = DEFAULT_LIMIT): NextResponse | nu
 
 export function withCors(req: Request, response: NextResponse): NextResponse {
   const origin = req.headers.get("origin");
-  if (origin && allowedOrigins().has(origin)) {
+  if (origin && isAllowedOrigin(origin, req)) {
     response.headers.set("Access-Control-Allow-Origin", origin);
     response.headers.set("Vary", "Origin");
     response.headers.set("Access-Control-Allow-Methods", "GET,POST,OPTIONS");

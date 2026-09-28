@@ -58,6 +58,14 @@ describe("security utilities", () => {
     expect(blocked?.headers.get("Access-Control-Allow-Origin")).toBeNull();
   });
 
+  it("permits browser origins from Vercel deployments (*.vercel.app)", () => {
+    const req = new Request("https://voltgrid-6a57.vercel.app/api/stations", {
+      headers: { origin: "https://voltgrid-6a57.vercel.app" },
+    });
+    const blocked = apiGuard(req);
+    expect(blocked).toBeNull();
+  });
+
   it("permits requests within the configured rate limit", () => {
     const limit = 5;
     for (let i = 0; i < limit; i++) {
