@@ -228,8 +228,9 @@ export function TripForm({
         return;
       }
       router.push("/route");
-    } catch {
-      setGeneralError("Network failure. Check that the VoltGrid service is running.");
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Routing service unavailable. Please retry.";
+      setGeneralError(msg);
       setBusy(false);
     }
   }

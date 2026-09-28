@@ -5,10 +5,20 @@ export const RESULT_STORAGE_KEY = "voltgrid.result";
 
 export async function apiGet<T>(path: string): Promise<T> {
   const res = await fetch(path, { cache: "no-store" });
+  const text = await res.text();
+  let json: unknown;
+  try {
+    json = JSON.parse(text);
+  } catch {
+    if (res.status === 504) {
+      throw new Error("Server gateway timed out (504). Please try again.");
+    }
+    throw new Error(`Request failed (${res.status})`);
+  }
   if (!res.ok) {
     throw new Error(`Request failed (${res.status})`);
   }
-  return res.json() as Promise<T>;
+  return json as T;
 }
 
 export async function apiPost<T>(path: string, body: unknown): Promise<T> {
@@ -17,14 +27,24 @@ export async function apiPost<T>(path: string, body: unknown): Promise<T> {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-  const json = (await res.json()) as T;
+  const text = await res.text();
+  let json: unknown;
+  try {
+    json = JSON.parse(text);
+  } catch {
+    if (res.status === 504) {
+      throw new Error("The calculation timed out (504 Gateway Timeout). Please retry.");
+    }
+    throw new Error(`Server returned status ${res.status}`);
+  }
   if (!res.ok && json && typeof json === "object" && "ok" in json) {
-    return json;
+    return json as T;
   }
   if (!res.ok) {
-    throw new Error(`Request failed (${res.status})`);
+    const errorObj = json as { message?: string } | undefined;
+    throw new Error(errorObj?.message || `Request failed (${res.status})`);
   }
-  return json;
+  return json as T;
 }
 
 export function saveTrip(trip: TripRequest): void {

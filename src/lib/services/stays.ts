@@ -87,13 +87,13 @@ export async function findOvernightStays(
       method: "POST",
       headers: { "Content-Type": "text/plain" },
       body: query,
-      signal: AbortSignal.timeout(10000),
+      signal: AbortSignal.timeout(2500),
     });
     if (!res.ok) throw new Error(`Overpass responded with ${res.status}`);
     const data = await res.json();
     elements = Array.isArray(data?.elements) ? data.elements : [];
   } catch (err) {
-    console.error("Overnight stay lookup failed (Overpass):", err);
+    console.warn("Overnight stay lookup skipped (Overpass timeout or offline):", err);
     return [];
   }
 
